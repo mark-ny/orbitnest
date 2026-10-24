@@ -1,0 +1,30 @@
+[project]
+name = "orbitnest"
+version = "0.1.0"
+description = "OrbitNest Workspaces control plane"
+requires-python = ">=3.11"
+# Runtime dependencies actually used by this build. See docs/ARCHITECTURE.md ADR-001/002 for why
+# FastAPI/SQLAlchemy/Alembic/argon2-cffi from the spec are not used yet (package index unreachable
+# in the build sandbox). Versions below are the ones the tests were run against.
+dependencies = [
+    "starlette>=1.7,<2",
+    "pydantic>=2.13,<3",
+    "uvicorn>=0.54,<1",
+    "python-multipart>=0.0.32",
+    "anyio>=4.15",
+]
+
+[project.optional-dependencies]
+argon2 = ["argon2-cffi>=23.1"]   # preferred Argon2id backend (ADR-002); scrypt used if absent
+dev = ["ruff>=0.16"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
+ignore = ["S101"]  # asserts are used in exception handlers for type narrowing
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "B"]

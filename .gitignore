@@ -1,0 +1,36 @@
+# secrets and local state
+.env
+.env.*
+!.env.example
+*.key
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+secret.key
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# node
+node_modules/
+frontend/dist/
+
+# logs and data
+logs/
+*.log
+data/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

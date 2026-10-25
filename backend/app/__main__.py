@@ -57,6 +57,76 @@ def cmd_capabilities(_: argparse.Namespace) -> int:
     return 0
 
 
+def _auth_service():  # type: ignore[no-untyped-def]
+    from app.auth.passwords import PasswordHasher
+    from app.auth.service import AuthService
+    from app.db import Database, migrate
+
+    settings = _settings().with_resolved_secret()
+    db = Database(settings.db_path)
+    migrate(db)
+    return AuthService(db, PasswordHasher(), settings), settings
+
+
+def _read_password(args: argparse.Namespace, prompt: str = "Password: ") -> str:
+    if getattr(args, "password_stdin", False):
+        return sys.stdin.readline().rstrip("\r\n")
+    import getpass
+
+    first = getpass.getpass(prompt)
+    if getpass.getpass("Repeat password: ") != first:
+        print("passwords do not match", file=sys.stderr)
+        raise SystemExit(2)
+    return first
+
+
+def _run_auth(action):  # type: ignore[no-untyped-def]
+    from app.core.errors import AppError
+
+    try:
+        return action()
+    except AppError as exc:
+        reasons = "; ".join(d["reason"] for d in (exc.details or []))
+        print(f"error: {exc.message} {reasons}".strip(), file=sys.stderr)
+        raise SystemExit(1) from None
+
+
+def cmd_setup_token(_: argparse.Namespace) -> int:
+    from app.auth import setup_token
+
+    service, settings = _auth_service()
+    if not service.setup_required():
+        print("setup is already complete; no setup token is needed")
+        return 0
+    path = setup_token.ensure_setup_token(settings.data_dir)
+    token = setup_token.read_setup_token(settings.data_dir)
+    print(f"setup token file: {path}")
+    print(f"setup token: {token}")
+    return 0
+
+
+def cmd_create_admin(args: argparse.Namespace) -> int:
+    service, _ = _auth_service()
+    password = _read_password(args)
+    user = _run_auth(lambda: service.create_admin_local(args.username, password))
+    print(f"created administrator {user.username}")
+    return 0
+
+
+def cmd_reset_password(args: argparse.Namespace) -> int:
+    service, _ = _auth_service()
+    password = _read_password(args, "New password: ")
+    _run_auth(lambda: service.force_reset_password(args.username, password, reactivate=args.reactivate))
+    print(f"password reset for {args.username}; all of their sessions were revoked")
+    return 0
+
+
+def cmd_revoke_sessions(_: argparse.Namespace) -> int:
+    service, _settings_unused = _auth_service()
+    print(f"revoked {service.revoke_all_sessions()} session(s)")
+    return 0
+
+
 def cmd_serve(_: argparse.Namespace) -> int:
     import uvicorn
 
@@ -82,13 +152,22 @@ COMMANDS = {
     "migration-status": cmd_migration_status,
     "capabilities": cmd_capabilities,
     "check-config": cmd_check_config,
+    "setup-token": cmd_setup_token,
+    "create-admin": cmd_create_admin,
+    "reset-password": cmd_reset_password,
+    "revoke-sessions": cmd_revoke_sessions,
 }
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="orbitnest", description="OrbitNest Workspaces control plane")
     parser.add_argument("command", choices=sorted(COMMANDS))
+    parser.add_argument("username", nargs="?", help="for create-admin / reset-password")
+    parser.add_argument("--password-stdin", action="store_true", help="read the password from stdin")
+    parser.add_argument("--reactivate", action="store_true", help="reset-password: also re-enable the user")
     args = parser.parse_args(argv)
+    if args.command in {"create-admin", "reset-password"} and not args.username:
+        parser.error(f"{args.command} requires a username")
     return COMMANDS[args.command](args)
 
 

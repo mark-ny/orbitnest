@@ -5,7 +5,7 @@ import unittest
 from app.core.platform import detect_capabilities
 from app.main import create_app
 from tests.asgi_client import AsgiClient
-from tests.helpers import TempDirMixin, make_settings
+from tests.helpers import TempDirMixin, fast_hasher, make_settings
 
 
 class ApiFoundationTests(TempDirMixin, unittest.TestCase):
@@ -25,24 +25,27 @@ class ApiFoundationTests(TempDirMixin, unittest.TestCase):
         self.assertEqual(r.status, 503)
         self.assertFalse(r.json()["checks"]["migrations"])
 
-    def test_capabilities_for_loopback_client(self) -> None:
+    def test_capabilities_requires_authentication(self) -> None:
         r = self.make_client().get("/api/v1/system/capabilities")
+        self.assertEqual(r.status, 401)
+        self.assertEqual(r.json()["error"]["code"], "unauthorized")
+
+    def test_capabilities_for_authenticated_user(self) -> None:
+        _, admin = self.admin_session()
+        r = admin.get("/api/v1/system/capabilities")
         self.assertEqual(r.status, 200)
         body = r.json()
         self.assertIn(body["mode"], {"linux-docker", "linux-no-container"})
         self.assertIn("features", body)
         self.assertNotIn(str(self.tmp), r.text, "server paths must not leak")
 
-    def test_capabilities_denied_for_remote_client(self) -> None:
-        r = self.make_client().get("/api/v1/system/capabilities", client=("203.0.113.9", 4444))
-        self.assertEqual(r.status, 403)
-        self.assertEqual(r.json()["error"]["code"], "forbidden")
-
     def test_capabilities_uses_injected_detector(self) -> None:
         caps = detect_capabilities(self.tmp, environ={}, sys_platform="win32", which=lambda n: None)
-        app = create_app(make_settings(self.tmp), capability_detector=lambda: caps)
-        r = AsgiClient(app).get("/api/v1/system/capabilities")
-        self.assertEqual(r.json()["mode"], "windows-no-container")
+        app = create_app(
+            make_settings(self.tmp), capability_detector=lambda: caps, password_hasher=fast_hasher()
+        )
+        admin = self.setup_admin(AsgiClient(app))
+        self.assertEqual(admin.get("/api/v1/system/capabilities").json()["mode"], "windows-no-container")
 
 
 class ErrorSchemaTests(TempDirMixin, unittest.TestCase):
@@ -64,8 +67,9 @@ class ErrorSchemaTests(TempDirMixin, unittest.TestCase):
         def boom() -> object:
             raise RuntimeError("secret internal detail /srv/app/path password=hunter2")
 
-        client = AsgiClient(create_app(make_settings(self.tmp), capability_detector=boom))
-        r = client.get("/api/v1/system/capabilities")
+        app = create_app(make_settings(self.tmp), capability_detector=boom, password_hasher=fast_hasher())
+        admin = self.setup_admin(AsgiClient(app))
+        r = admin.get("/api/v1/system/capabilities")
         err = self.assert_error(r, 500, "internal_error")
         self.assertNotIn("hunter2", r.text)
         self.assertNotIn("/srv/app", r.text)

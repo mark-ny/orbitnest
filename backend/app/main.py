@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from collections.abc import Callable
 
 from starlette.applications import Starlette
@@ -11,7 +13,12 @@ from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.routing import Mount
 
-from app.api import system
+from app.api import audit as audit_api
+from app.api import auth as auth_api
+from app.api import system, users
+from app.auth import setup_token
+from app.auth.passwords import PasswordHasher
+from app.auth.service import AuthService
 from app.core import errors
 from app.core.config import Settings
 from app.core.logging import configure_logging
@@ -22,12 +29,33 @@ from app.db import Database, migrate
 log = logging.getLogger("orbitnest")
 
 API_PREFIX = "/api/v1"
+CAPABILITY_TTL_SECONDS = 30.0
+
+
+class CachedDetector:
+    """TTL cache so unauthenticated/frequent callers cannot make us spawn subprocesses per request."""
+
+    def __init__(self, detector: Callable[[], Capabilities], ttl: float = CAPABILITY_TTL_SECONDS) -> None:
+        self._detector = detector
+        self._ttl = ttl
+        self._lock = threading.Lock()
+        self._value: Capabilities | None = None
+        self._at = 0.0
+
+    def __call__(self) -> Capabilities:
+        with self._lock:
+            now = time.monotonic()
+            if self._value is None or now - self._at > self._ttl:
+                self._value = self._detector()
+                self._at = now
+            return self._value
 
 
 def create_app(
     settings: Settings | None = None,
     *,
     capability_detector: Callable[[], Capabilities] | None = None,
+    password_hasher: PasswordHasher | None = None,
     run_migrations: bool = True,
 ) -> Starlette:
     settings = (settings or Settings.from_env()).with_resolved_secret()
@@ -38,6 +66,14 @@ def create_app(
         applied = migrate(db)
         if applied:
             log.info("applied migrations", extra={"versions": applied})
+
+    auth_service = AuthService(db, password_hasher or PasswordHasher(), settings)
+    if run_migrations:
+        if auth_service.setup_required():
+            path = setup_token.ensure_setup_token(settings.data_dir)
+            log.warning("first-run setup required; read the setup token from the file %s", path.name)
+        else:
+            setup_token.remove_setup_token(settings.data_dir)
 
     middleware = [
         Middleware(EdgeMiddleware, trusted_proxy=settings.trusted_proxy),
@@ -56,8 +92,9 @@ def create_app(
             )
         )
 
+    routes = [*system.routes, *auth_api.routes, *users.routes, *audit_api.routes]
     app = Starlette(
-        routes=[Mount(API_PREFIX, routes=system.routes)],
+        routes=[Mount(API_PREFIX, routes=routes)],
         middleware=middleware,
         exception_handlers={
             errors.AppError: errors.app_error_handler,
@@ -66,5 +103,11 @@ def create_app(
     )
     app.state.settings = settings
     app.state.db = db
-    app.state.detect_capabilities = capability_detector or (lambda: detect_capabilities(settings.data_dir))
+    app.state.auth = auth_service
+    app.state.detect_capabilities = CachedDetector(
+        capability_detector or (lambda: detect_capabilities(settings.data_dir))
+    )
     return app
+
+
+PUBLIC_ROUTES = system.PUBLIC_ROUTES | auth_api.PUBLIC_ROUTES

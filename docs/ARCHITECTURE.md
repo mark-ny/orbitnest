@@ -67,3 +67,22 @@ argv only). A host shell is never exposed to non-admin users.
 In: auth, workspace lifecycle against fake and (unverified here) Docker adapters, persistence
 semantics, file manager, terminal, capability reporting, dashboard.
 Out until verified: streamed desktops/browsers (Phase 8), OIDC, Podman, PostgreSQL.
+
+## Authentication design (Phase 2)
+
+- **First run:** `python -m app serve` creates `setup-token` (0600) in the data directory and logs
+  only the file name. `POST /api/v1/auth/setup` needs that token, works exactly once, and removes
+  the file. Loopback is *not* treated as trusted (a same-host proxy would make everyone loopback).
+- **Sessions:** random 256-bit cookie value, stored only as SHA-256; idle and absolute expiry;
+  revoked on logout, password change/reset, role change and deactivation.
+- **CSRF:** every unsafe authenticated request needs `X-CSRF-Token` (HMAC of the session id with
+  the secret key, never stored) and an acceptable `Origin`. Login/setup/reset check `Origin` only.
+- **Lockout:** DB-backed failure counts, exponential backoff capped at 15 minutes, keyed on the
+  attempted username and on the client IP; the lock check runs *before* password verification.
+- **Roles:** `admin`, `user`, `read_only`; `app/auth/policy.py`. Enforced in handlers via
+  `authenticate(request, permission=...)`; workspace ownership rules (`can_access_workspace`) are
+  used by the workspace service in Phase 3.
+- **Recovery (needs shell access to the host):** `python -m app setup-token | create-admin <name> |
+  reset-password <name> | revoke-sessions`. All recovery actions are audited.
+- **Known gaps:** no OIDC (optional in spec, not started); no 2FA; no email-based self-service
+  reset (admin-issued single-use tokens only, because there is no mail transport).

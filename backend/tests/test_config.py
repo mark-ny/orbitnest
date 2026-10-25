@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from app.core import config
 from app.core.config import ConfigError, Settings, default_data_dir
@@ -73,17 +74,33 @@ class SafetyRuleTests(unittest.TestCase):
             Settings.from_env({"HOME": "/h", "ORBITNEST_HOST": "0.0.0.0"})
         self.assertIn("non-loopback", str(ctx.exception))
 
-    def test_non_loopback_refused_while_auth_not_enforced(self) -> None:
-        self.assertFalse(config.AUTH_ENFORCED, "update this test in Phase 2 when auth is enforced")
+    def test_non_loopback_requires_secret_from_env(self) -> None:
         with self.assertRaises(ConfigError) as ctx:
             Settings.from_env(
-                {
-                    "HOME": "/h",
-                    "ORBITNEST_HOST": "0.0.0.0",
-                    "ORBITNEST_ALLOW_NON_LOOPBACK": "true",
-                    "ORBITNEST_SECRET_KEY": STRONG,
-                }
+                {"HOME": "/h", "ORBITNEST_HOST": "0.0.0.0", "ORBITNEST_ALLOW_NON_LOOPBACK": "true"}
             )
+        self.assertIn("SECRET_KEY", str(ctx.exception))
+
+    def test_non_loopback_allowed_with_opt_in_and_secret(self) -> None:
+        s = Settings.from_env(
+            {
+                "HOME": "/h",
+                "ORBITNEST_HOST": "0.0.0.0",
+                "ORBITNEST_ALLOW_NON_LOOPBACK": "true",
+                "ORBITNEST_SECRET_KEY": STRONG,
+            }
+        )
+        self.assertEqual(s.host, "0.0.0.0")
+
+    def test_non_loopback_refused_if_auth_enforcement_flag_is_off(self) -> None:
+        env = {
+            "HOME": "/h",
+            "ORBITNEST_HOST": "0.0.0.0",
+            "ORBITNEST_ALLOW_NON_LOOPBACK": "true",
+            "ORBITNEST_SECRET_KEY": STRONG,
+        }
+        with mock.patch.object(config, "AUTH_ENFORCED", False), self.assertRaises(ConfigError) as ctx:
+            Settings.from_env(env)
         self.assertIn("authentication is not enforced", str(ctx.exception))
 
 

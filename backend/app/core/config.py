@@ -33,9 +33,10 @@ from pydantic import (
 
 ENV_PREFIX = "ORBITNEST_"
 
-# Flipped to True in Phase 2 when real authentication guards every non-public route.
-# While False, the server will only bind to loopback addresses.
-AUTH_ENFORCED = False
+# True once real authentication guards every non-public route (Phase 2). A route-walking test
+# (tests/test_route_guard.py) fails if a route is added without authentication or an explicit
+# public-allowlist entry. If this is ever set False, the server only binds loopback addresses.
+AUTH_ENFORCED = True
 
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 MIN_SECRET_LENGTH = 32
@@ -94,6 +95,8 @@ class Settings(BaseModel):
     public_url: str | None = None
     trusted_proxy: bool = False
     max_request_bytes: int = Field(default=1_048_576, ge=1_024, le=64 * 1024 * 1024)
+    session_idle_minutes: int = Field(default=480, ge=5, le=60 * 24 * 30)
+    session_absolute_hours: int = Field(default=168, ge=1, le=24 * 90)
 
     @field_validator("host")
     @classmethod
@@ -209,6 +212,8 @@ class Settings(BaseModel):
             "cookie_secure",
             "public_url",
             "max_request_bytes",
+            "session_idle_minutes",
+            "session_absolute_hours",
         ):
             value = pick(name)
             if value is not None:

@@ -29,6 +29,12 @@ RATE_LIMITED = "rate_limited"
 PAYLOAD_TOO_LARGE = "payload_too_large"
 INVALID_HOST = "invalid_host"
 NOT_READY = "not_ready"
+INVALID_CREDENTIALS = "invalid_credentials"
+CSRF_FAILED = "csrf_failed"
+SETUP_UNAVAILABLE = "setup_unavailable"
+INVALID_SETUP_TOKEN = "invalid_setup_token"  # noqa: S105 - error code, not a credential
+INVALID_RESET_TOKEN = "invalid_reset_token"  # noqa: S105 - error code, not a credential
+LAST_ADMIN = "last_admin"
 INTERNAL_ERROR = "internal_error"
 HTTP_ERROR = "http_error"
 

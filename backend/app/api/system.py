@@ -1,8 +1,7 @@
 """Health, readiness and capability routes (``/api/v1``).
 
-``/health`` and ``/ready`` are intentionally public and minimal. ``/system/capabilities`` exposes
-host details, so until authentication exists (Phase 2) it answers loopback clients only. Phase 2
-replaces ``require_local_client`` with real authentication and role checks.
+``/health`` and ``/ready`` are intentionally public and minimal. Capabilities expose host details,
+so they require an authenticated session.
 """
 
 from __future__ import annotations
@@ -12,8 +11,8 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from app import __version__
-from app.core import errors
-from app.core.middleware import is_loopback_client
+from app.auth.deps import authenticate
+from app.auth.policy import Perm
 from app.db import migration_status
 
 
@@ -33,13 +32,8 @@ def ready(request: Request) -> JSONResponse:
     return JSONResponse({"status": "not_ready", "checks": checks}, status_code=503)
 
 
-def require_local_client(request: Request) -> None:
-    if not is_loopback_client(request.scope):
-        raise errors.AppError(errors.FORBIDDEN, "This endpoint is only available locally.", 403)
-
-
 def capabilities(request: Request) -> JSONResponse:
-    require_local_client(request)
+    authenticate(request, permission=Perm.SYSTEM_READ)
     report = request.app.state.detect_capabilities()
     return JSONResponse(report.model_dump(mode="json"))
 
@@ -49,3 +43,5 @@ routes = [
     Route("/ready", ready, methods=["GET"]),
     Route("/system/capabilities", capabilities, methods=["GET"]),
 ]
+
+PUBLIC_ROUTES = frozenset({("GET", "/api/v1/health"), ("GET", "/api/v1/ready")})

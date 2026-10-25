@@ -138,18 +138,32 @@ class _BodyTooLarge(Exception):
 class BodyLimitMiddleware:
     """Reject oversized bodies by Content-Length and while streaming."""
 
-    def __init__(self, app: ASGIApp, *, max_bytes: int) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        max_bytes: int,
+        route_limits: list[tuple[str, re.Pattern[str], int]] | None = None,
+    ) -> None:
         self.app = app
         self.max_bytes = max_bytes
+        self.route_limits = route_limits or []  # (method, path regex, larger limit) for uploads
+
+    def _limit_for(self, scope: Scope) -> int:
+        for method, pattern, limit in self.route_limits:
+            if scope.get("method") == method and pattern.match(scope.get("path", "")):
+                return limit
+        return self.max_bytes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        limit = self._limit_for(scope)
         declared = _header(scope, b"content-length")
         if declared is not None:
             try:
-                too_big = int(declared) > self.max_bytes
+                too_big = int(declared) > limit
             except ValueError:
                 too_big = True
             if too_big:
@@ -166,7 +180,7 @@ class BodyLimitMiddleware:
             message = await receive()
             if message["type"] == "http.request":
                 seen += len(message.get("body", b""))
-                if seen > self.max_bytes:
+                if seen > limit:
                     raise _BodyTooLarge
             return message
 

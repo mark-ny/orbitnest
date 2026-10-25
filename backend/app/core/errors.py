@@ -41,6 +41,7 @@ SESSION_LIMIT = "session_limit"
 WORKSPACE_BUSY = "workspace_busy"
 WORKSPACE_DELETED = "workspace_deleted"
 CONFIRMATION_REQUIRED = "confirmation_required"
+NOT_SUPPORTED = "not_supported"
 INTERNAL_ERROR = "internal_error"
 HTTP_ERROR = "http_error"
 

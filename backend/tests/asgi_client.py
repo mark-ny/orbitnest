@@ -130,6 +130,9 @@ class AsgiClient:
             if not sent_all:
                 sent_all = True
                 return {"type": "http.request", "body": b"", "more_body": False}
+            # A real server only reports a disconnect when the peer leaves. Streaming responses
+            # listen for it concurrently, so answering at once would cancel them mid-body.
+            await asyncio.sleep(5)
             return {"type": "http.disconnect"}
 
         status = 0

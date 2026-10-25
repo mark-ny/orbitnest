@@ -216,6 +216,12 @@ class WorkspaceService:
         return dict(labels)
 
     # -- reads ---------------------------------------------------------------------------
+    def access(
+        self, actor: User, workspace_id: str, *, write: bool, ctx: RequestContext | None = None
+    ) -> Workspace:
+        """Ownership-checked fetch for other services (files, terminal). Foreign ids are 404."""
+        return self._load(actor, workspace_id, write=write, ctx=ctx)
+
     def get(self, actor: User, workspace_id: str, ctx: RequestContext | None = None) -> Workspace:
         return self._load(actor, workspace_id, write=False, ctx=ctx)
 

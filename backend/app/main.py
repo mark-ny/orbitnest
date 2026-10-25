@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import re
 import threading
 import time
 from collections.abc import AsyncIterator, Callable
@@ -16,6 +17,7 @@ from starlette.routing import Mount
 
 from app.api import audit as audit_api
 from app.api import auth as auth_api
+from app.api import files as files_api
 from app.api import system, users
 from app.api import workspaces as workspaces_api
 from app.auth import setup_token
@@ -29,6 +31,7 @@ from app.core.platform import Capabilities, detect_capabilities
 from app.db import Database, migrate
 from app.runtimes.base import RuntimeAdapter
 from app.runtimes.factory import build_runtimes
+from app.services.files import FileService
 from app.services.jobs import JobRunner, ThreadRunner
 from app.services.maintenance import MaintenanceThread
 from app.services.templates import TemplateRegistry
@@ -90,7 +93,17 @@ def create_app(
     middleware = [
         Middleware(EdgeMiddleware, trusted_proxy=settings.trusted_proxy),
         Middleware(HostCheckMiddleware, allowed_hosts=settings.effective_allowed_hosts),
-        Middleware(BodyLimitMiddleware, max_bytes=settings.max_request_bytes),
+        Middleware(
+            BodyLimitMiddleware,
+            max_bytes=settings.max_request_bytes,
+            route_limits=[
+                (
+                    "PUT",
+                    re.compile(r"^/api/v1/workspaces/[0-9A-Z]{26}/files/content$"),
+                    settings.max_upload_mb * 1024 * 1024,
+                )
+            ],
+        ),
     ]
     if settings.cors_origins:
         # Explicit origins only; credentials are allowed solely because wildcards are rejected.
@@ -99,12 +112,19 @@ def create_app(
                 CORSMiddleware,
                 allow_origins=settings.cors_origins,
                 allow_credentials=True,
-                allow_methods=["GET", "POST", "PATCH", "DELETE"],
+                allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
                 allow_headers=["content-type", "x-csrf-token", "x-request-id"],
             )
         )
 
-    routes = [*system.routes, *auth_api.routes, *users.routes, *audit_api.routes, *workspaces_api.routes]
+    routes = [
+        *system.routes,
+        *auth_api.routes,
+        *users.routes,
+        *audit_api.routes,
+        *workspaces_api.routes,
+        *files_api.routes,
+    ]
     detector = CachedDetector(capability_detector or (lambda: detect_capabilities(settings.data_dir)))
     registry = TemplateRegistry(db)
     workspace_service = WorkspaceService(
@@ -144,6 +164,7 @@ def create_app(
     app.state.detect_capabilities = detector
     app.state.templates = registry
     app.state.workspaces = workspace_service
+    app.state.files = FileService(workspace_service, settings)
     app.state.maintenance = maintenance
     return app
 

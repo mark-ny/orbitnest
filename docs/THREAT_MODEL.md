@@ -47,7 +47,6 @@
   correctly or all clients share one IP.
 - First-run setup requires a token read from the data directory, so a network attacker cannot
   claim the admin account first; anyone with read access to that directory can.
-
 - Anyone who can create Docker containers on the host can become root on it.
 - PRoot and Termux-local mode provide no meaningful isolation.
 - Disposable-workspace deletion is ordinary filesystem deletion, not cryptographic erasure.

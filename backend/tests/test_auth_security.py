@@ -133,6 +133,15 @@ class SessionLifetimeTests(TempDirMixin, unittest.TestCase):
         r = AsgiClient(app).post("/api/v1/auth/login", json={"username": "bob", "password": PASSWORD})
         self.assertEqual(r.status, 401)
 
+    def test_session_filter_rejects_inactive_user_even_if_not_revoked(self) -> None:
+        """Defence in depth: deactivation straight in the DB (no revocation) must still lock out."""
+        app, admin = self.admin_session()
+        admin.post("/api/v1/users", json={"username": "bob", "password": PASSWORD, "role": "user"})
+        bob = self.login(app, "bob")
+        with app.state.db.transaction() as conn:
+            conn.execute("UPDATE users SET is_active = 0 WHERE username = 'bob'")
+        self.assertEqual(bob.get("/api/v1/auth/session").status, 401)
+
     def test_garbage_cookie_rejected(self) -> None:
         c = self.make_client()
         for value in ("", "x", "a" * 500, "' OR 1=1 --"):

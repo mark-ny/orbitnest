@@ -53,8 +53,8 @@ Last updated: 2026-10-25 (Phases 0-2 complete)
 - Platform capability detection with injectable inputs (`app/core/platform.py`).
 - SQLite layer and migration runner with tamper detection (`app/db/`), migration `0001`
   (system_settings, audit_events).
-- Routes: `GET /api/v1/health`, `GET /api/v1/ready`, `GET /api/v1/system/capabilities`
-  (loopback clients only until Phase 2 adds auth).
+- Routes: `GET /api/v1/health`, `GET /api/v1/ready` (public), `GET /api/v1/system/capabilities`
+  (authenticated since Phase 2).
 - CLI: `python -m app {serve,migrate,migration-status,capabilities,check-config}`.
 
 ## Phase 2: what exists
@@ -76,17 +76,18 @@ Last updated: 2026-10-25 (Phases 0-2 complete)
 
 ```
 cd backend && python3 -m unittest discover -s tests -t .
-Ran 167 tests ... OK
+Ran 168 tests ... OK
 ruff check .           -> All checks passed
 ```
 
-- Mutation check (manual script, not committed): 12 deliberate breakages of security controls
-  (CSRF, lockout, session revocation/expiry filters, permission check, Origin check, X-Forwarded-For
-  trust, reset-token reuse, unauthenticated capabilities, setup-token check, last-admin guard,
-  password-change revocation). All were caught except two that are redundant by design: the reset
-  token is protected by two independent guards (either alone can be removed without a test failing;
-  removing both is caught), and the session `is_active` filter is backed by session revocation at
-  deactivation.
+- Mutation check (manual script, not committed): 13 deliberate breakages of security controls
+  (CSRF, lockout, revocation and inactive-user filters on sessions, permission check, Origin check,
+  X-Forwarded-For trust, reset-token reuse, reset for deactivated users, unauthenticated
+  capabilities, setup-token check, last-admin guard, password-change revocation). The first run
+  found two survivors: (a) removing only one of the reset token's two independent guards (removing
+  both is caught, so this is defence in depth, not a gap), and (b) the session `is_active` filter and
+  reset-for-deactivated-user were untested; tests were added and those mutants are now caught.
+
 - Real-socket smoke test (uvicorn + curl): anonymous 401, setup with CLI-provided token, cookie
   HttpOnly, CSRF rejection, cross-origin rejection, audit trail, restart keeps sessions and keeps
   setup closed, no passwords/tokens in log files.

@@ -35,6 +35,12 @@ SETUP_UNAVAILABLE = "setup_unavailable"
 INVALID_SETUP_TOKEN = "invalid_setup_token"  # noqa: S105 - error code, not a credential
 INVALID_RESET_TOKEN = "invalid_reset_token"  # noqa: S105 - error code, not a credential
 LAST_ADMIN = "last_admin"
+TEMPLATE_UNAVAILABLE = "template_unavailable"
+QUOTA_EXCEEDED = "quota_exceeded"
+SESSION_LIMIT = "session_limit"
+WORKSPACE_BUSY = "workspace_busy"
+WORKSPACE_DELETED = "workspace_deleted"
+CONFIRMATION_REQUIRED = "confirmation_required"
 INTERNAL_ERROR = "internal_error"
 HTTP_ERROR = "http_error"
 

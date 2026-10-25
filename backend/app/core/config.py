@@ -97,6 +97,11 @@ class Settings(BaseModel):
     max_request_bytes: int = Field(default=1_048_576, ge=1_024, le=64 * 1024 * 1024)
     session_idle_minutes: int = Field(default=480, ge=5, le=60 * 24 * 30)
     session_absolute_hours: int = Field(default=168, ge=1, le=24 * 90)
+    # Workspace operations
+    start_timeout_seconds: int = Field(default=60, ge=1, le=900)
+    stop_grace_seconds: int = Field(default=10, ge=1, le=120)
+    abandoned_after_minutes: int = Field(default=5, ge=1, le=240)
+    maintenance_interval_seconds: int = Field(default=60, ge=0, le=3600)  # 0 disables the sweeper
 
     @field_validator("host")
     @classmethod
@@ -168,6 +173,10 @@ class Settings(BaseModel):
         return self.database_path or (self.data_dir / "orbitnest.sqlite3")
 
     @property
+    def workspaces_root(self) -> Path:
+        return self.data_dir / "workspaces"
+
+    @property
     def logs_path(self) -> Path:
         return self.log_dir or (self.data_dir / "logs")
 
@@ -214,6 +223,10 @@ class Settings(BaseModel):
             "max_request_bytes",
             "session_idle_minutes",
             "session_absolute_hours",
+            "start_timeout_seconds",
+            "stop_grace_seconds",
+            "abandoned_after_minutes",
+            "maintenance_interval_seconds",
         ):
             value = pick(name)
             if value is not None:

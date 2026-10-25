@@ -1,0 +1,463 @@
+"""Template registry: built-in profiles plus administrator-defined custom templates.
+
+Templates are the only source of images, commands and runtime options. Users select a template id
+and a resource profile; they never supply an image, command, mount, port or capability. Custom
+templates are admin-only and validated against the same rules as built-ins.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import shutil
+import sqlite3
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+
+from app.core import matrix
+from app.core.ids import to_iso, utcnow
+from app.core.platform import Capabilities
+from app.db import Database
+from app.services.resources import PROFILE_ORDER
+
+Category = Literal["browser", "desktop", "terminal", "developer", "security", "custom"]
+Access = Literal["terminal", "stream", "none"]
+NetworkPolicy = Literal["none", "isolated-bridge"]
+
+TEMPLATE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,47}$")
+# Registry/name[:tag][@sha256:digest]. Must not start with '-' (would be parsed as a CLI flag).
+IMAGE_RE = re.compile(r"^[a-z0-9][A-Za-z0-9._/:@-]{0,199}$")
+DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
+ALLOWED_CAPABILITIES = frozenset({"NET_BIND_SERVICE"})
+MAX_ARGV = 16
+MAX_ARG_LEN = 200
+
+
+class TemplateError(ValueError):
+    pass
+
+
+def _check_argv(value: tuple[str, ...], field: str) -> tuple[str, ...]:
+    if len(value) > MAX_ARGV:
+        raise ValueError(f"{field} has too many arguments")
+    for arg in value:
+        if not arg or len(arg) > MAX_ARG_LEN or "\x00" in arg or "\n" in arg:
+            raise ValueError(f"{field} contains an invalid argument")
+    if value and value[0].startswith("-"):
+        raise ValueError(f"{field} must start with an executable, not an option")
+    return value
+
+
+class Template(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: str
+    name: str = Field(min_length=1, max_length=80)
+    description: str = Field(max_length=500)
+    category: Category
+    image: str
+    image_digest: str | None = None
+    command: tuple[str, ...] = ()
+    healthcheck: tuple[str, ...] | None = None  # None: "container running" counts as healthy
+    access: Access = "terminal"
+    default_profile: str = "small"
+    max_profile: str = "large"
+    default_persistence: Literal["persistent", "disposable"] = "persistent"
+    default_idle_minutes: int | None = Field(default=60, ge=1, le=60 * 24 * 14)
+    network_policy: NetworkPolicy = "isolated-bridge"
+    allowed_networks: tuple[NetworkPolicy, ...] = ("isolated-bridge", "none")
+    published_ports: tuple[int, ...] = ()
+    capabilities: tuple[str, ...] = ()
+    data_mount: str = "/home/workspace"
+    local_supported: bool = False
+    required_local_tools: tuple[str, ...] = ()
+    local_command: tuple[str, ...] = ()
+    authorized_use_only: bool = False
+    deprecated: bool = False
+    deprecation_note: str | None = None
+    update_policy: Literal["manual", "pinned"] = "manual"
+    enabled: bool = True
+    disabled_reason: str | None = None
+    notes: str | None = Field(default=None, max_length=500)
+    builtin: bool = False
+
+    @field_validator("id")
+    @classmethod
+    def _id(cls, v: str) -> str:
+        if not TEMPLATE_ID_RE.match(v):
+            raise ValueError("id must be 2-48 chars of a-z, 0-9 and '-', starting with a letter or digit")
+        return v
+
+    @field_validator("image")
+    @classmethod
+    def _image(cls, v: str) -> str:
+        if not IMAGE_RE.match(v) or ".." in v or "//" in v:
+            raise ValueError("image reference is not valid")
+        return v
+
+    @field_validator("image_digest")
+    @classmethod
+    def _digest(cls, v: str | None) -> str | None:
+        if v is not None and not DIGEST_RE.match(v):
+            raise ValueError("image_digest must look like sha256:<64 hex>")
+        return v
+
+    @field_validator("command", "local_command")
+    @classmethod
+    def _argv(cls, v: tuple[str, ...], info: Any) -> tuple[str, ...]:
+        return _check_argv(v, info.field_name)
+
+    @field_validator("healthcheck")
+    @classmethod
+    def _hc(cls, v: tuple[str, ...] | None) -> tuple[str, ...] | None:
+        return None if v is None else _check_argv(v, "healthcheck")
+
+    @field_validator("capabilities")
+    @classmethod
+    def _caps(cls, v: tuple[str, ...]) -> tuple[str, ...]:
+        bad = [c for c in v if c not in ALLOWED_CAPABILITIES]
+        if bad:
+            raise ValueError(f"capability not allowed: {bad[0]}")
+        return v
+
+    @field_validator("published_ports")
+    @classmethod
+    def _ports(cls, v: tuple[int, ...]) -> tuple[int, ...]:
+        if v:
+            raise ValueError("publishing ports is not supported; access goes through the gateway")
+        return v
+
+    @field_validator("data_mount")
+    @classmethod
+    def _mount(cls, v: str) -> str:
+        if not v.startswith("/") or v == "/" or ".." in v.split("/") or "\x00" in v or ":" in v or "," in v:
+            raise ValueError("data_mount must be an absolute path below /")
+        return v
+
+    @model_validator(mode="after")
+    def _consistency(self) -> Template:
+        for name in (self.default_profile, self.max_profile):
+            if name not in PROFILE_ORDER:
+                raise ValueError(f"unknown resource profile {name!r}")
+        if PROFILE_ORDER.index(self.default_profile) > PROFILE_ORDER.index(self.max_profile):
+            raise ValueError("default_profile exceeds max_profile")
+        if self.network_policy not in self.allowed_networks:
+            raise ValueError("network_policy must be one of allowed_networks")
+        if not self.enabled and not self.disabled_reason:
+            raise ValueError("a disabled template needs a disabled_reason")
+        if self.deprecated and not self.deprecation_note:
+            raise ValueError("a deprecated template needs a deprecation_note")
+        if self.local_command and not self.local_supported:
+            raise ValueError("local_command requires local_supported")
+        return self
+
+    @property
+    def matrix_key(self) -> str:
+        return self.id if self.builtin else "custom"
+
+    @property
+    def platform_support(self) -> dict[str, str]:
+        return {m: matrix.matrix_state(self.matrix_key, m) for m in matrix.MODES}
+
+
+_IDLE = ("sleep", "infinity")
+
+
+def _builtin(**kw: Any) -> Template:
+    return Template(builtin=True, **kw)
+
+
+BUILTIN_TEMPLATES: tuple[Template, ...] = (
+    _builtin(
+        id="browser-chromium",
+        name="Browser: Chromium",
+        description="Isolated Chromium browser session streamed to your browser.",
+        category="browser",
+        image="lscr.io/linuxserver/chromium:latest",
+        access="stream",
+        default_persistence="disposable",
+        default_idle_minutes=30,
+        notes="Image tag is not pinned or verified. Pin a digest before enabling streaming.",
+    ),
+    _builtin(
+        id="browser-firefox",
+        name="Browser: Firefox",
+        description="Isolated Firefox browser session streamed to your browser.",
+        category="browser",
+        image="lscr.io/linuxserver/firefox:latest",
+        access="stream",
+        default_persistence="disposable",
+        default_idle_minutes=30,
+        notes="Image tag is not pinned or verified. Pin a digest before enabling streaming.",
+    ),
+    _builtin(
+        id="desktop-ubuntu",
+        name="Linux Desktop: Ubuntu",
+        description="Ubuntu desktop session streamed to your browser.",
+        category="desktop",
+        image="lscr.io/linuxserver/webtop:ubuntu-xfce",
+        access="stream",
+        default_profile="medium",
+        default_idle_minutes=60,
+        notes="Image tag is not pinned or verified. Pin a digest before enabling streaming.",
+    ),
+    _builtin(
+        id="desktop-kali",
+        name="Linux Desktop: Kali",
+        description="Kali desktop for authorized security work.",
+        category="desktop",
+        image="kalilinux/kali-rolling",
+        access="stream",
+        default_profile="medium",
+        authorized_use_only=True,
+        enabled=False,
+        disabled_reason="No verified, maintained Kali desktop image is configured.",
+    ),
+    _builtin(
+        id="terminal-ubuntu",
+        name="Terminal: Ubuntu",
+        description="Ubuntu command-line environment.",
+        category="terminal",
+        image="ubuntu:24.04",
+        command=_IDLE,
+        default_idle_minutes=120,
+    ),
+    _builtin(
+        id="dev-python",
+        name="Developer: Python",
+        description="Python 3.12 with a persistent project directory.",
+        category="developer",
+        image="python:3.12-slim",
+        command=_IDLE,
+        default_idle_minutes=120,
+        local_supported=True,
+        required_local_tools=("python3",),
+    ),
+    _builtin(
+        id="dev-node",
+        name="Developer: Node.js",
+        description="Node.js 22 with a persistent project directory.",
+        category="developer",
+        image="node:22-slim",
+        command=_IDLE,
+        default_idle_minutes=120,
+        local_supported=True,
+        required_local_tools=("node",),
+    ),
+    _builtin(
+        id="dev-web",
+        name="Developer: Web",
+        description="HTML/CSS/JavaScript development with Node.js tooling.",
+        category="developer",
+        image="node:22-slim",
+        command=_IDLE,
+        default_idle_minutes=120,
+        local_supported=True,
+        required_local_tools=("node",),
+    ),
+    _builtin(
+        id="security-lab",
+        name="Security Lab",
+        description=(
+            "Non-privileged lab for AUTHORIZED security testing only. No host networking and no "
+            "extra Linux capabilities (raw-socket tools such as SYN scans will not work)."
+        ),
+        category="security",
+        image="kalilinux/kali-rolling",
+        command=_IDLE,
+        default_profile="medium",
+        default_idle_minutes=60,
+        authorized_use_only=True,
+        notes="Rolling image: not reproducible. Use only against systems you are authorized to test.",
+    ),
+)
+
+BUILTIN_BY_ID: dict[str, Template] = {t.id: t for t in BUILTIN_TEMPLATES}
+
+
+def validate_custom_definition(payload: dict[str, Any]) -> Template:
+    """Validate an administrator-supplied definition. Raises TemplateError with safe messages."""
+    data = dict(payload)
+    data.pop("builtin", None)
+    template_id = str(data.get("id", ""))
+    if not template_id.startswith("custom-"):
+        raise TemplateError("custom template ids must start with 'custom-'")
+    if template_id in BUILTIN_BY_ID:
+        raise TemplateError("id collides with a built-in template")
+    data["category"] = "custom"
+    # Local-process execution runs on the host without isolation; it is never offered for custom
+    # templates, and arbitrary host commands are never accepted from definitions.
+    data.setdefault("local_supported", False)
+    if data.get("local_supported") or data.get("local_command"):
+        raise TemplateError("custom templates cannot run as local processes")
+    try:
+        return Template.model_validate(data)
+    except ValidationError as exc:
+        reasons = "; ".join(
+            f"{'.'.join(str(p) for p in e['loc']) or 'template'}: {e['msg']}"
+            for e in exc.errors(include_input=False, include_url=False, include_context=False)
+        )
+        raise TemplateError(reasons) from None
+
+
+@dataclass(frozen=True)
+class Availability:
+    """Whether (and how) a template can be created on this host right now."""
+
+    creatable: bool
+    state: str  # matrix state for the current mode, or "unsupported"
+    runtime: str | None
+    reason: str | None = None
+    remediation: str | None = None
+    isolation: str = "none"  # "container" | "none"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "creatable": self.creatable,
+            "state": self.state,
+            "runtime": self.runtime,
+            "isolation": self.isolation,
+            "reason": self.reason,
+            "remediation": self.remediation,
+        }
+
+
+_MODE_TO_COLUMN = {
+    "linux-docker": ("linux-docker", "docker"),
+    "windows-docker-desktop": ("windows-docker-desktop", "docker"),
+    "termux-local": ("termux-local", "local"),
+}
+
+
+def evaluate(
+    template: Template,
+    caps: Capabilities,
+    *,
+    which: Callable[[str], str | None] = shutil.which,
+) -> Availability:
+    """Decide availability from the matrix, the detected capabilities, and unbuilt-feature blockers."""
+    if not template.enabled:
+        return Availability(False, "unsupported", None, template.disabled_reason)
+    mapped = _MODE_TO_COLUMN.get(caps.mode)
+    if mapped is None:
+        feature = caps.features.get("container_workspaces")
+        return Availability(
+            False,
+            "unsupported",
+            None,
+            feature.reason if feature else "No workspace runtime is available.",
+            feature.remediation if feature else None,
+        )
+    column, runtime = mapped
+    state = matrix.matrix_state(template.matrix_key, column)
+    isolation = "container" if runtime == "docker" else "none"
+    blocker = matrix.BLOCKED.get((template.matrix_key, column))
+    if template.access == "stream" and blocker is None and runtime == "docker":
+        blocker = "streaming"
+    if blocker:
+        return Availability(False, state, runtime, matrix.BLOCKERS[blocker], isolation=isolation)
+    if state in {"remote", "unsupported"}:
+        return Availability(
+            False,
+            state,
+            runtime,
+            "This profile needs a remote Docker-capable Linux host; this device can only be the client."
+            if state == "remote"
+            else "Not supported on this platform.",
+            "Open a remote OrbitNest host in your browser, or run workspaces on a Linux host.",
+            isolation,
+        )
+    if runtime == "local":
+        if not template.local_supported:
+            return Availability(
+                False, state, runtime, "This profile cannot run as a local process.", isolation=isolation
+            )
+        missing = [tool for tool in template.required_local_tools if which(tool) is None]
+        if missing:
+            return Availability(
+                False,
+                state,
+                runtime,
+                f"Required tool not installed: {missing[0]}",
+                f"In Termux run: pkg install {'python' if missing[0] == 'python3' else 'nodejs'}",
+                isolation,
+            )
+    return Availability(True, state, runtime, isolation=isolation)
+
+
+class TemplateRegistry:
+    """Built-in templates plus the administrator's custom templates (stored in the database)."""
+
+    def __init__(self, db: Database) -> None:
+        self.db = db
+
+    def _custom_rows(self, conn: sqlite3.Connection) -> list[tuple[Template, bool]]:
+        out: list[tuple[Template, bool]] = []
+        for row in conn.execute("SELECT definition, enabled FROM custom_templates ORDER BY created_at, id"):
+            tpl = Template.model_validate(json.loads(row["definition"]))
+            out.append(
+                (
+                    tpl.model_copy(
+                        update={
+                            "enabled": bool(row["enabled"]),
+                            "disabled_reason": None if row["enabled"] else "Disabled by an administrator.",
+                        }
+                    ),
+                    bool(row["enabled"]),
+                )
+            )
+        return out
+
+    def list(self) -> list[Template]:
+        with self.db.connect() as conn:
+            return [*BUILTIN_TEMPLATES, *(t for t, _ in self._custom_rows(conn))]
+
+    def get(self, template_id: str) -> Template | None:
+        if template_id in BUILTIN_BY_ID:
+            return BUILTIN_BY_ID[template_id]
+        if not template_id.startswith("custom-"):
+            return None
+        with self.db.connect() as conn:
+            for tpl, _ in self._custom_rows(conn):
+                if tpl.id == template_id:
+                    return tpl
+        return None
+
+    def create_custom(self, actor_id: str, payload: dict[str, Any]) -> Template:
+        tpl = validate_custom_definition(payload)
+        now = to_iso(utcnow())
+        try:
+            with self.db.transaction() as conn:
+                conn.execute(
+                    "INSERT INTO custom_templates "
+                    "(id, definition, enabled, created_by, created_at, updated_at) "
+                    "VALUES (?, ?, 1, ?, ?, ?)",
+                    (tpl.id, tpl.model_dump_json(), actor_id, now, now),
+                )
+        except sqlite3.IntegrityError:
+            raise TemplateError("a template with that id already exists") from None
+        return tpl
+
+    def set_enabled(self, template_id: str, enabled: bool) -> Template | None:
+        with self.db.transaction() as conn:
+            cur = conn.execute(
+                "UPDATE custom_templates SET enabled = ?, updated_at = ? WHERE id = ?",
+                (int(enabled), to_iso(utcnow()), template_id),
+            )
+            if cur.rowcount == 0:
+                return None
+        return self.get(template_id)
+
+    def delete_custom(self, template_id: str) -> bool:
+        """Delete a custom template. Refused while any non-deleted workspace uses it."""
+        with self.db.transaction() as conn:
+            in_use = conn.execute(
+                "SELECT COUNT(*) FROM workspaces WHERE template_id = ? AND status != 'deleted'",
+                (template_id,),
+            ).fetchone()[0]
+            if in_use:
+                raise TemplateError("template is in use by existing workspaces")
+            return conn.execute("DELETE FROM custom_templates WHERE id = ?", (template_id,)).rowcount > 0

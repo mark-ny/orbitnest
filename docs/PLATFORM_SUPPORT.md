@@ -1,7 +1,6 @@
 # Platform support matrix
 
-This matrix is the human-readable twin of the machine-readable matrix in
-`backend/app/core/matrix.py` (added in Phase 3). A test asserts the two agree.
+The profile table below is generated from `backend/app/core/matrix.py`; a test asserts the two agree.
 
 Legend:
 
@@ -24,24 +23,29 @@ Docker Engine does not run in ordinary, unrooted Termux. OrbitNest never assumes
 
 ## Profile x mode
 
-| Profile | Linux + Docker | Windows + Docker Desktop | Termux local | Termux to remote host |
-|---|---|---|---|---|
-| Browser: Chromium | Full | Full | Remote | Full |
-| Browser: Firefox | Full | Full | Remote | Full |
-| Linux Desktop: Ubuntu | Full | Full | Remote | Full |
-| Linux Desktop: Kali | Limited (image availability, authorized use only) | Limited (same, plus arch) | Remote | Limited |
-| Terminal: Ubuntu | Full | Full | Limited (proot-distro, if installed; no isolation) | Full |
-| Developer: Python | Full | Full | Limited (local venv/process, no isolation) | Full |
-| Developer: Node.js | Full | Full | Limited (local process, no isolation) | Full |
-| Developer: Web | Full | Full | Limited (local static server, no isolation) | Full |
-| Security Lab | Full (non-privileged, no host networking) | Limited | Remote (refused locally) | Full |
-| Custom Template | Full (admin-defined, allowlisted) | Full | Remote | Full |
+Generated from `backend/app/core/matrix.py` (a test fails if this table drifts from the code).
+"Blocked" means the design target is that state but a required piece is not built yet, so the
+dashboard disables creation and says why.
+
+<!-- MATRIX:BEGIN -->
+| Profile | Linux + Docker | Windows + Docker Desktop (WSL 2) | Termux local | Termux to remote host | Notes |
+|---|---|---|---|---|---|
+| `browser-chromium` | Full (blocked: streaming) | Full (blocked: streaming) | Remote host required | Full (blocked: streaming) |  |
+| `browser-firefox` | Full (blocked: streaming) | Full (blocked: streaming) | Remote host required | Full (blocked: streaming) |  |
+| `desktop-ubuntu` | Full (blocked: streaming) | Full (blocked: streaming) | Remote host required | Full (blocked: streaming) |  |
+| `desktop-kali` | Limited (blocked: streaming) | Limited (blocked: streaming) | Remote host required | Limited (blocked: streaming) | No verified maintained image is configured; disabled. Authorized security work only. |
+| `terminal-ubuntu` | Full | Full | Limited (blocked: proot) | Full | Termux: would use proot-distro (no isolation). |
+| `dev-python` | Full | Full | Limited | Full | Termux: local folder and local toolchain, no isolation. |
+| `dev-node` | Full | Full | Limited | Full | Termux: local folder and local toolchain, no isolation. |
+| `dev-web` | Full | Full | Limited | Full | Termux: local folder and local toolchain, no isolation. |
+| `security-lab` | Full | Limited | Remote host required | Full | Authorized security work only. Windows: limited by WSL 2 networking. |
+| `custom` | Full | Full | Remote host required | Full |  |
+<!-- MATRIX:END -->
 
 Notes:
 
-- "Full" for streamed desktops/browsers additionally depends on the Phase 8 gateway. Until that
-  phase is complete and verified, `BUILD_STATUS.md` records streaming as **not implemented**
-  and the dashboard shows it as unavailable.
+- Streamed desktops/browsers depend on the Phase 8 gateway. Until that phase is complete and
+  verified, `BUILD_STATUS.md` records streaming as **not implemented** and those profiles cannot be created.
 - Architecture matters: images are assumed `amd64`. On `arm64` hosts (Apple silicon under
   Docker Desktop, Android devices, ARM VPS) availability is per image and is reported by the
   capability endpoint rather than assumed.

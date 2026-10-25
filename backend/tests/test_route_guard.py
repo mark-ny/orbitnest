@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import unittest
 
-from starlette.routing import Mount, Route
+from starlette.routing import Mount, Route, WebSocketRoute
 
 from app.main import API_PREFIX, PUBLIC_ROUTES
 from tests.asgi_client import AsgiClient
@@ -38,6 +38,31 @@ class RouteGuardTests(TempDirMixin, unittest.TestCase):
                 checked += 1
         self.assertEqual(seen_public, set(PUBLIC_ROUTES), "PUBLIC_ROUTES lists a route that does not exist")
         self.assertGreater(checked, 8)
+
+    def test_every_websocket_route_rejects_anonymous_handshakes(self) -> None:
+        import asyncio
+
+        from tests import asgi_ws
+
+        app = self.make_app()
+        found = []
+
+        def walk_ws(routes, prefix=""):
+            for r in routes:
+                if isinstance(r, Mount):
+                    yield from walk_ws(r.routes, prefix + r.path)
+                elif isinstance(r, WebSocketRoute):
+                    yield prefix + r.path
+
+        for path in walk_ws(app.routes):
+            found.append(path)
+
+            async def attempt(p=re.sub(r"\{[a-z_]+\}", "x", path)):
+                c = await asgi_ws.connect(app, p, headers={"origin": "http://localhost"}).start()
+                return c.accepted, c.close_code
+
+            self.assertEqual(asyncio.run(attempt()), (False, 1008), path)
+        self.assertTrue(found, "no websocket routes found; the guard would silently pass")
 
     def test_anonymous_requests_carry_no_data(self) -> None:
         app = self.make_app()

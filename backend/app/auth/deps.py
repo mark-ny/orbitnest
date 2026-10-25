@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from urllib.parse import urlsplit
 
-from starlette.requests import Request
+from starlette.requests import HTTPConnection, Request
 from starlette.responses import Response
 
 from app.auth.policy import has_permission
@@ -27,7 +27,7 @@ CSRF_HEADER = "x-csrf-token"
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
-def client_ip(request: Request) -> str | None:
+def client_ip(request: HTTPConnection) -> str | None:
     """Peer address. ``X-Forwarded-For`` is honoured only when a trusted proxy is configured,
     and then only the rightmost entry (the one our own proxy appended)."""
     settings: Settings = request.app.state.settings
@@ -40,7 +40,7 @@ def client_ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
 
-def request_context(request: Request) -> RequestContext:
+def request_context(request: HTTPConnection) -> RequestContext:
     return RequestContext(
         ip=client_ip(request),
         request_id=getattr(request.state, "request_id", None)
@@ -79,7 +79,7 @@ def clear_session_cookie(response: Response, request: Request) -> None:
     )
 
 
-def origin_acceptable(request: Request) -> bool:
+def origin_acceptable(request: HTTPConnection) -> bool:
     """Same-origin check for unsafe requests.
 
     Browsers always send Origin on cross-origin POSTs; if it is absent we fall back to
@@ -143,6 +143,41 @@ def authenticate(request: Request, *, permission: str | None = None, csrf: bool 
             actor_user_id=auth.user.id,
             ctx=ctx,
             details={"permission": permission, "method": request.method, "path": request.url.path},
+        )
+        raise errors.AppError(errors.FORBIDDEN, "You do not have permission to do that.", 403)
+    return auth
+
+
+def authenticate_ws(conn: HTTPConnection, *, permission: str) -> AuthContext:
+    """Authenticate a WebSocket handshake: session cookie, same-origin check, permission.
+
+    Browsers cannot attach custom headers to WebSockets, so CSRF tokens are not used here; the
+    Origin check (plus SameSite=Lax cookies) is what stops cross-site WebSocket hijacking.
+    """
+    service: AuthService = conn.app.state.auth
+    token = conn.cookies.get(COOKIE_NAME)
+    auth = service.resolve_session(token) if token else None
+    if auth is None:
+        raise errors.AppError(errors.UNAUTHORIZED, "Authentication required.", 401)
+    ctx = request_context(conn)
+    if not origin_acceptable(conn):
+        audit.record(
+            service.db,
+            action="authz.ws_origin_rejected",
+            outcome="denied",
+            actor_user_id=auth.user.id,
+            ctx=ctx,
+            details={"path": conn.url.path},
+        )
+        raise errors.AppError(errors.CSRF_FAILED, "Cross-origin request rejected.", 403)
+    if not has_permission(auth.user.role, permission):
+        audit.record(
+            service.db,
+            action="authz.denied",
+            outcome="denied",
+            actor_user_id=auth.user.id,
+            ctx=ctx,
+            details={"permission": permission, "path": conn.url.path},
         )
         raise errors.AppError(errors.FORBIDDEN, "You do not have permission to do that.", 403)
     return auth

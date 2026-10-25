@@ -23,6 +23,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -31,6 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.runtimes.base import RuntimeAdapter, RuntimeFailure, RuntimeSpec, RuntimeState
+from app.runtimes.pty_shell import PtyShell, ShellSession, local_shell_argv
 
 # Executables a local template may start. Deliberately tiny; shells and package managers excluded.
 ALLOWED_EXECUTABLES = frozenset({"python3", "python", "node"})
@@ -221,6 +223,31 @@ class LocalProcessRuntime(RuntimeAdapter):
             return RuntimeState("running")
         child = self._children.get(resource_id)
         return RuntimeState("exited", exit_code=child.returncode if child else None, detail="process exited")
+
+    def open_shell(self, resource_id: str, cols: int, rows: int) -> ShellSession:
+        """A shell in the workspace folder as the control plane's own OS user: NO isolation.
+        Callers must restrict this to administrators (see TerminalService)."""
+        data = self._load(resource_id)
+        if data is None or not data["running"]:
+            raise RuntimeFailure("workspace is not running", operation="shell")
+        shell = next((p for p in (shutil.which("bash"), shutil.which("sh")) if p), None)
+        if shell is None:
+            raise RuntimeFailure("no shell is installed", operation="shell")
+        env = self._env(data["data_dir"])
+        env["TERM"] = "xterm-256color"
+        env["SHELL"] = shell
+        try:
+            return PtyShell.spawn(
+                local_shell_argv(int(data["max_file_mb"]), shell),
+                env=env,
+                cwd=data["data_dir"],
+                cols=cols,
+                rows=rows,
+            )
+        except OSError as exc:
+            raise RuntimeFailure(
+                f"could not open a terminal: {exc.strerror or 'os error'}", operation="shell"
+            ) from None
 
     def list_managed(self) -> dict[str, dict[str, str]]:
         found = {}

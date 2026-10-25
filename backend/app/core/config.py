@@ -95,6 +95,10 @@ class Settings(BaseModel):
     public_url: str | None = None
     trusted_proxy: bool = False
     max_upload_mb: int = Field(default=100, ge=1, le=2048)
+    max_terminals_per_workspace: int = Field(default=4, ge=1, le=32)
+    max_terminals_per_user: int = Field(default=8, ge=1, le=64)
+    terminal_idle_minutes: int = Field(default=30, ge=1, le=1440)
+    terminal_max_hours: int = Field(default=8, ge=1, le=72)
     max_request_bytes: int = Field(default=1_048_576, ge=1_024, le=64 * 1024 * 1024)
     session_idle_minutes: int = Field(default=480, ge=5, le=60 * 24 * 30)
     session_absolute_hours: int = Field(default=168, ge=1, le=24 * 90)
@@ -223,6 +227,10 @@ class Settings(BaseModel):
             "public_url",
             "max_request_bytes",
             "max_upload_mb",
+            "max_terminals_per_workspace",
+            "max_terminals_per_user",
+            "terminal_idle_minutes",
+            "terminal_max_hours",
             "session_idle_minutes",
             "session_absolute_hours",
             "start_timeout_seconds",

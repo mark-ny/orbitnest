@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import PurePath
 from typing import Literal
 
+from app.runtimes.pty_shell import ShellSession
 from app.services.templates import ALLOWED_CAPABILITIES, IMAGE_RE
 
 WORKSPACE_ID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
@@ -132,6 +133,10 @@ class RuntimeAdapter(ABC):
 
     @abstractmethod
     def inspect(self, resource_id: str) -> RuntimeState: ...
+
+    def open_shell(self, resource_id: str, cols: int, rows: int) -> ShellSession:
+        """Open an interactive shell inside the workspace. Adapters without support raise."""
+        raise RuntimeFailure("Terminals are not supported by this runtime.", operation="shell")
 
     @abstractmethod
     def list_managed(self) -> dict[str, dict[str, str]]:

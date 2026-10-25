@@ -112,6 +112,8 @@ class WorkspaceService:
         self._clock = clock
         self._now = now
         self._inflight: set[str] = set()
+        # Called with a workspace id when its runtime is about to stop, reset or go away.
+        self.on_inactive: list[Callable[[str], None]] = []
         self._lock = threading.Lock()
 
     # -- plumbing ------------------------------------------------------------------------
@@ -120,6 +122,13 @@ class WorkspaceService:
             src = self._runtimes_source
             self._runtimes = dict(src() if callable(src) else src)
         return self._runtimes
+
+    def _notify_inactive(self, workspace_id: str) -> None:
+        for hook in self.on_inactive:
+            try:
+                hook(workspace_id)
+            except Exception:
+                log.exception("inactive hook failed", extra={"workspace": workspace_id})
 
     def _submit(self, fn: Callable[..., None], workspace_id: str, *args: object) -> None:
         with self._lock:
@@ -677,6 +686,7 @@ class WorkspaceService:
             return
         adapter = self.adapters().get(ws.runtime)
         inst = self.store.current_instance(workspace_id)
+        self._notify_inactive(workspace_id)
         try:
             if inst is not None:
                 if adapter is None:
@@ -729,6 +739,7 @@ class WorkspaceService:
         if ws is None or ws.status != "provisioning":
             return
         adapter = self.adapters().get(ws.runtime)
+        self._notify_inactive(workspace_id)
         try:
             for inst in self.store.live_instances(workspace_id):
                 if adapter is None:
@@ -751,6 +762,7 @@ class WorkspaceService:
         if ws is None or ws.status != "deleting":
             return
         adapter = self.adapters().get(ws.runtime)
+        self._notify_inactive(workspace_id)
         try:
             for inst in self.store.live_instances(workspace_id):
                 if adapter is None:
@@ -875,6 +887,7 @@ class WorkspaceService:
                 if self.store.transition(
                     ws.id, "failed", from_=["running", "idle"], reason=why, event="runtime_lost"
                 ):
+                    self._notify_inactive(ws.id)
                     report.reconciled.append({"workspace_id": ws.id, "was": ws.status, "action": "failed"})
             elif state.state == "running":
                 self.store.update_fields(

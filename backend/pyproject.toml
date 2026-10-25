@@ -12,6 +12,9 @@ dependencies = [
     "uvicorn>=0.54,<1",
     "python-multipart>=0.0.32",
     "anyio>=4.15",
+    # Needed by uvicorn to serve WebSockets (the terminal). NOT installed in the build sandbox, so
+    # the real wire protocol was never exercised there; see BUILD_STATUS.md.
+    "websockets>=13",
 ]
 
 [project.optional-dependencies]

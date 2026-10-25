@@ -19,6 +19,7 @@ from app.api import audit as audit_api
 from app.api import auth as auth_api
 from app.api import files as files_api
 from app.api import system, users
+from app.api import terminal as terminal_api
 from app.api import workspaces as workspaces_api
 from app.auth import setup_token
 from app.auth.passwords import PasswordHasher
@@ -35,6 +36,7 @@ from app.services.files import FileService
 from app.services.jobs import JobRunner, ThreadRunner
 from app.services.maintenance import MaintenanceThread
 from app.services.templates import TemplateRegistry
+from app.services.terminals import TerminalService
 from app.services.workspace_store import WorkspaceStore
 from app.services.workspaces import WorkspaceService
 from app.storage.manager import StorageManager
@@ -124,6 +126,7 @@ def create_app(
         *audit_api.routes,
         *workspaces_api.routes,
         *files_api.routes,
+        *terminal_api.routes,
     ]
     detector = CachedDetector(capability_detector or (lambda: detect_capabilities(settings.data_dir)))
     registry = TemplateRegistry(db)
@@ -138,6 +141,7 @@ def create_app(
         runner=job_runner or ThreadRunner(),
         capabilities=detector,
     )
+    terminals = TerminalService(workspace_service, settings)
     maintenance = MaintenanceThread(workspace_service, settings.maintenance_interval_seconds)
 
     @contextlib.asynccontextmanager
@@ -147,6 +151,7 @@ def create_app(
             yield
         finally:
             maintenance.stop()
+            terminals.close_all()
             workspace_service.runner.shutdown()
 
     app = Starlette(
@@ -166,6 +171,7 @@ def create_app(
     app.state.workspaces = workspace_service
     app.state.files = FileService(workspace_service, settings)
     app.state.maintenance = maintenance
+    app.state.terminals = terminals
     return app
 
 

@@ -12,11 +12,13 @@ from tests.helpers import PASSWORD, TempDirMixin, fast_hasher, make_caps, make_s
 
 
 class ApiBase(TempDirMixin, unittest.TestCase):
+    settings_overrides: dict = {}  # noqa: RUF012
+
     def setUp(self) -> None:
         super().setUp()
         self.fake = FakeRuntime()
         self.app = create_app(
-            make_settings(self.tmp),
+            make_settings(self.tmp, **self.settings_overrides),
             capability_detector=lambda: make_caps({}, tmp=self.tmp),
             password_hasher=fast_hasher(),
             runtimes={"docker": self.fake},

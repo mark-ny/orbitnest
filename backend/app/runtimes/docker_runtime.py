@@ -24,6 +24,7 @@ from dataclasses import dataclass
 
 from app.core.platform import CommandResult
 from app.runtimes.base import RuntimeAdapter, RuntimeFailure, RuntimeSpec, RuntimeState
+from app.runtimes.pty_shell import PtyShell, ShellSession
 
 NETWORK_NAME = "orbitnest-workspaces"
 RESOURCE_ID_RE = re.compile(r"^[a-f0-9]{12,64}$")
@@ -71,6 +72,8 @@ class DockerRuntime(RuntimeAdapter):
     run: CommandRunner = subprocess_runner
     redact: tuple[str, ...] = ()  # host paths to scrub from error messages
     user: str | None = None
+    spawn: Callable[..., ShellSession] = PtyShell.spawn
+    shell_workdir: str = "/home/workspace"
 
     # -- helpers -------------------------------------------------------------------------
     def _safe(self, text: str) -> str:
@@ -255,6 +258,36 @@ class DockerRuntime(RuntimeAdapter):
         else:
             name = "unknown"
         return RuntimeState(name, healthy, state.get("ExitCode"), (state.get("Error") or None))  # type: ignore[arg-type]
+
+    def build_exec_argv(self, resource_id: str) -> list[str]:
+        """`docker exec -it` into the workspace. Runs as the container's configured non-root user."""
+        return [
+            self.docker_bin,
+            "exec",
+            "-it",
+            "--workdir",
+            self.shell_workdir,
+            "--env",
+            "TERM=xterm-256color",
+            self._rid(resource_id),
+            "sh",
+            "-c",
+            "command -v bash >/dev/null 2>&1 && exec bash -l || exec sh",
+        ]
+
+    def open_shell(self, resource_id: str, cols: int, rows: int) -> ShellSession:
+        argv = self.build_exec_argv(resource_id)
+        env = {
+            k: os.environ[k]
+            for k in ("PATH", "HOME", "DOCKER_HOST", "DOCKER_CONFIG", "DOCKER_CONTEXT")
+            if k in os.environ
+        }
+        try:
+            return self.spawn(argv, env=env, cwd=None, cols=cols, rows=rows)
+        except OSError as exc:
+            raise RuntimeFailure(
+                f"could not open a terminal: {exc.strerror or 'os error'}", operation="shell"
+            ) from None
 
     def list_managed(self) -> dict[str, dict[str, str]]:
         result = self._check(

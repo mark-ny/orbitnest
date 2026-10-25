@@ -8,6 +8,54 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from app.runtimes.base import RuntimeAdapter, RuntimeFailure, RuntimeSpec, RuntimeState
+from app.runtimes.pty_shell import ShellSession
+
+
+class FakeShell(ShellSession):
+    """Prompt, then echoes input back; ``exit`` ends it. Records resizes."""
+
+    def __init__(self, cols: int, rows: int) -> None:
+        self.size = (cols, rows)
+        self.resizes: list[tuple[int, int]] = []
+        self.closed = False
+        self._out: list[bytes] = [b"$ "]
+        self._exit: int | None = None
+        self._lock = threading.Lock()
+        self.written: list[bytes] = []
+
+    def read(self, timeout: float) -> bytes | None:
+        import time
+
+        end = time.monotonic() + timeout
+        while True:
+            with self._lock:
+                if self._out:
+                    return self._out.pop(0)
+                if self.closed or self._exit is not None:
+                    return b""
+            if time.monotonic() >= end:
+                return None
+            time.sleep(0.005)
+
+    def write(self, data: bytes) -> None:
+        with self._lock:
+            self.written.append(data)
+            if data.strip() == b"exit":
+                self._exit = 0
+            else:
+                self._out.append(data)
+
+    def resize(self, cols: int, rows: int) -> None:
+        self.size = (cols, rows)
+        self.resizes.append((cols, rows))
+
+    def close(self) -> None:
+        with self._lock:
+            self.closed = True
+
+    @property
+    def exit_code(self) -> int | None:
+        return self._exit if self._exit is not None else (0 if self.closed else None)
 
 
 @dataclass
@@ -83,6 +131,17 @@ class FakeRuntime(RuntimeAdapter):
         if res is None:
             return RuntimeState("missing")
         return RuntimeState(res.state, res.healthy, res.exit_code)  # type: ignore[arg-type]
+
+    shells: list[FakeShell] = field(default_factory=list)
+
+    def open_shell(self, resource_id: str, cols: int, rows: int) -> ShellSession:
+        self._enter("open_shell", resource_id)
+        res = self._get(resource_id)
+        if res.state != "running":
+            raise RuntimeFailure("workspace is not running", operation="shell")
+        shell = FakeShell(cols, rows)
+        self.shells.append(shell)
+        return shell
 
     def list_managed(self) -> dict[str, dict[str, str]]:
         self._enter("list_managed", "-")

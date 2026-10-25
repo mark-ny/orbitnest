@@ -86,3 +86,15 @@ Out until verified: streamed desktops/browsers (Phase 8), OIDC, Podman, PostgreS
   reset-password <name> | revoke-sessions`. All recovery actions are audited.
 - **Known gaps:** no OIDC (optional in spec, not started); no 2FA; no email-based self-service
   reset (admin-issued single-use tokens only, because there is no mail transport).
+
+## Workspace lifecycle (Phases 3-4)
+
+- Status changes are compare-and-set updates inside `BEGIN IMMEDIATE` transactions. User actions
+  only flip the status and queue a job; each job re-reads the status first, so stale work (after a
+  delete, a crash or a second request) is a no-op.
+- Failure reasons shown to users come from the adapter's `safe_message` (no host paths); unexpected
+  exceptions become a generic message and are logged server-side only.
+- Boot reconciliation treats every transitional workspace as abandoned (`failed`, user retries);
+  an interrupted delete is never resumed automatically because purge needs an explicit confirmation.
+- Storage quota is a reporting/file-manager limit, not filesystem enforcement. Network policy is
+  `none` or an ICC-disabled bridge; egress and metadata blocking belong to the deployment firewall.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import unittest
 
 from starlette.routing import Mount, Route
@@ -27,7 +28,7 @@ class RouteGuardTests(TempDirMixin, unittest.TestCase):
         checked = 0
         for path, methods in walk(app.routes):
             self.assertTrue(path.startswith(API_PREFIX), path)
-            concrete = path.replace("{user_id}", "x").replace("{session_id}", "x").replace("{id}", "x")
+            concrete = re.sub(r"\{[a-z_]+\}", "x", path)
             for method in methods:
                 if (method, path) in PUBLIC_ROUTES:
                     seen_public.add((method, path))

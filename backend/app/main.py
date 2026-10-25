@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
@@ -16,6 +17,7 @@ from starlette.routing import Mount
 from app.api import audit as audit_api
 from app.api import auth as auth_api
 from app.api import system, users
+from app.api import workspaces as workspaces_api
 from app.auth import setup_token
 from app.auth.passwords import PasswordHasher
 from app.auth.service import AuthService
@@ -25,6 +27,14 @@ from app.core.logging import configure_logging
 from app.core.middleware import BodyLimitMiddleware, EdgeMiddleware, HostCheckMiddleware
 from app.core.platform import Capabilities, detect_capabilities
 from app.db import Database, migrate
+from app.runtimes.base import RuntimeAdapter
+from app.runtimes.factory import build_runtimes
+from app.services.jobs import JobRunner, ThreadRunner
+from app.services.maintenance import MaintenanceThread
+from app.services.templates import TemplateRegistry
+from app.services.workspace_store import WorkspaceStore
+from app.services.workspaces import WorkspaceService
+from app.storage.manager import StorageManager
 
 log = logging.getLogger("orbitnest")
 
@@ -57,6 +67,8 @@ def create_app(
     capability_detector: Callable[[], Capabilities] | None = None,
     password_hasher: PasswordHasher | None = None,
     run_migrations: bool = True,
+    runtimes: dict[str, RuntimeAdapter] | None = None,
+    job_runner: JobRunner | None = None,
 ) -> Starlette:
     settings = (settings or Settings.from_env()).with_resolved_secret()
     configure_logging(settings)
@@ -92,8 +104,33 @@ def create_app(
             )
         )
 
-    routes = [*system.routes, *auth_api.routes, *users.routes, *audit_api.routes]
+    routes = [*system.routes, *auth_api.routes, *users.routes, *audit_api.routes, *workspaces_api.routes]
+    detector = CachedDetector(capability_detector or (lambda: detect_capabilities(settings.data_dir)))
+    registry = TemplateRegistry(db)
+    workspace_service = WorkspaceService(
+        db=db,
+        settings=settings,
+        store=WorkspaceStore(db),
+        registry=registry,
+        storage=StorageManager(settings.workspaces_root),
+        # Adapters are chosen lazily from detected capabilities (no docker probing at import time).
+        runtimes=(lambda: build_runtimes(settings, detector())) if runtimes is None else runtimes,
+        runner=job_runner or ThreadRunner(),
+        capabilities=detector,
+    )
+    maintenance = MaintenanceThread(workspace_service, settings.maintenance_interval_seconds)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app: Starlette) -> AsyncIterator[None]:
+        maintenance.start()
+        try:
+            yield
+        finally:
+            maintenance.stop()
+            workspace_service.runner.shutdown()
+
     app = Starlette(
+        lifespan=lifespan,
         routes=[Mount(API_PREFIX, routes=routes)],
         middleware=middleware,
         exception_handlers={
@@ -104,9 +141,10 @@ def create_app(
     app.state.settings = settings
     app.state.db = db
     app.state.auth = auth_service
-    app.state.detect_capabilities = CachedDetector(
-        capability_detector or (lambda: detect_capabilities(settings.data_dir))
-    )
+    app.state.detect_capabilities = detector
+    app.state.templates = registry
+    app.state.workspaces = workspace_service
+    app.state.maintenance = maintenance
     return app
 
 

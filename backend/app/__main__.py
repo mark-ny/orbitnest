@@ -146,7 +146,23 @@ def cmd_serve(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_cleanup(args: argparse.Namespace) -> int:
+    """Report (default) or remove orphaned runtime resources and purged data directories."""
+    from app.main import create_app
+    from app.services.jobs import InlineRunner
+
+    app = create_app(_settings(), job_runner=InlineRunner())
+    report = app.state.workspaces.cleanup(apply=args.apply)
+    print(json.dumps(report.to_dict(), indent=2))
+    if not args.apply and (report.orphans or report.leftover_data):
+        print(
+            "dry run: nothing was changed. Re-run with --apply to remove orphaned resources.", file=sys.stderr
+        )
+    return 0
+
+
 COMMANDS = {
+    "cleanup": cmd_cleanup,
     "serve": cmd_serve,
     "migrate": cmd_migrate,
     "migration-status": cmd_migration_status,
@@ -165,6 +181,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("username", nargs="?", help="for create-admin / reset-password")
     parser.add_argument("--password-stdin", action="store_true", help="read the password from stdin")
     parser.add_argument("--reactivate", action="store_true", help="reset-password: also re-enable the user")
+    parser.add_argument(
+        "--apply", action="store_true", help="cleanup: actually remove (default is a dry run)"
+    )
     args = parser.parse_args(argv)
     if args.command in {"create-admin", "reset-password"} and not args.username:
         parser.error(f"{args.command} requires a username")

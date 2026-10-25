@@ -10,7 +10,7 @@ import asyncio
 import json as jsonlib
 from http.cookies import SimpleCookie
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode
 
 
 class Response:
@@ -91,6 +91,9 @@ class AsgiClient:
         client: tuple[str, int] | None,
         chunks: list[bytes] | None,
     ) -> Response:
+        if "?" in path:  # allow "/x?a=1" as well as params={...}
+            path, _, raw_query = path.partition("?")
+            params = {**dict(parse_qsl(raw_query, keep_blank_values=True)), **(params or {})}
         hdrs = {k.lower(): v for k, v in headers.items()}
         body = content or b""
         if json is not None:

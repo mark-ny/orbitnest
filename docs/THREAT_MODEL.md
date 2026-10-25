@@ -21,13 +21,13 @@
 
 | # | Threat | Mitigation | Status |
 |---|---|---|---|
-| T1 | Control-plane compromise becomes host root via Docker | Narrow adapter; no docker.sock in workspaces; allowlisted images/options; no `--privileged`; documented that docker-group membership is root-equivalent | Design (Phase 3) |
-| T2 | Container escape / lateral movement | Non-root user, dropped caps, `no-new-privileges`, PID/memory/CPU limits, isolated network, no host mounts | Design (Phase 3) |
-| T3 | Workspace reaches control plane or cloud metadata | Dedicated network, egress rules, block 169.254.169.254 | Design (Phase 3/9) |
+| T1 | Control-plane compromise becomes host root via Docker | Narrow adapter; no docker.sock in workspaces; allowlisted images/options; no `--privileged`; documented that docker-group membership is root-equivalent | Adapter implemented; flags checked against real CLI help; **not verified against a real daemon** |
+| T2 | Container escape / lateral movement | Non-root user, dropped caps, `no-new-privileges`, PID/memory/CPU limits, isolated network, no host mounts | Adapter implemented (same caveat as T1) |
+| T3 | Workspace reaches control plane or cloud metadata | Dedicated network, egress rules, block 169.254.169.254 | Bridge with ICC disabled implemented; **egress/metadata blocking is NOT enforced by the adapter** (deployment firewall, Phase 9) |
 | T4 | Credential stuffing / brute force | Argon2id-class hashing (scrypt fallback here), rate limit with backoff, uniform login errors | Implemented and tested (Phase 2) |
 | T5 | Session theft / fixation | HttpOnly, SameSite cookies, Secure on HTTPS, new session per login, hashed tokens at rest, revocation | Implemented and tested (Phase 2) |
 | T6 | CSRF | Per-session HMAC CSRF token on every unsafe authenticated request, plus Origin check; login/setup/reset check Origin | Implemented and tested (Phase 2) |
-| T7 | IDOR/BOLA | Ownership check in the service layer on every workspace access; opaque IDs | Phase 3 |
+| T7 | IDOR/BOLA | Ownership check in the service layer on every workspace access; opaque IDs | Implemented and tested (service + HTTP; foreign ids return 404 and are audited; mutant caught) |
 | T8 | Path traversal / symlink escape in file manager | Canonical-path containment, reject symlinks that resolve outside root | Phase 6 |
 | T9 | Command injection | No `shell=True`; argv lists only; schema-validated inputs | all phases |
 | T10 | SQL injection | Parameterized queries only | all phases |
@@ -36,8 +36,8 @@
 | T13 | Secret leakage in logs/errors | Redaction filter, no secrets in URLs | Phase 1 |
 | T14 | Insecure default config | Startup validation fails closed in production; no generated predictable secrets | Phase 1 |
 | T15 | Unauthenticated admin surface on a public interface | Refuse non-loopback bind without explicit opt-in and an env secret; route-guard test fails if any route is public without being allowlisted | Implemented and tested |
-| T16 | Resource exhaustion | Per-user quotas, request size limits, bounded buffers | Phases 3-7 |
-| T17 | Termux/PRoot mistaken for a sandbox | UI and docs label it "no isolation"; no claim otherwise | Phase 3 |
+| T16 | Resource exhaustion | Per-user quotas, request size limits, bounded buffers | Per-user workspace/running quotas enforced atomically (tested incl. concurrency); filesystem storage quota **not enforced** for workloads; Phases 6-7 pending |
+| T17 | Termux/PRoot mistaken for a sandbox | UI and docs label it "no isolation"; no claim otherwise | API reports `isolation: none` for local runtime; UI/docs pending (Phase 5/9) |
 
 ## Residual risks (always listed)
 

@@ -1,6 +1,6 @@
 # BUILD_STATUS
 
-Last updated: 2026-10-25 (Phases 0-2 complete)
+Last updated: 2026-10-25 (Phases 0-4 complete)
 
 ## Environment of the build sandbox (verified by inspection)
 
@@ -31,8 +31,8 @@ Last updated: 2026-10-25 (Phases 0-2 complete)
 | 0 Inspect and plan | Done |
 | 1 Foundation | Done (details below) |
 | 2 Auth | Done (details below) |
-| 3 Domain and runtimes | Not started |
-| 4 Lifecycle | Not started |
+| 3 Domain and runtimes | Done (fake + local verified with real processes; Docker adapter **unverified against a daemon**) |
+| 4 Lifecycle and persistence | Done (details below) |
 | 5 Frontend | **Blocked** on npm. Fallback to decide: dependency-free static frontend |
 | 6 File manager | Not started |
 | 7 Terminal | Not started |
@@ -72,11 +72,36 @@ Last updated: 2026-10-25 (Phases 0-2 complete)
   `PUBLIC_ROUTES`. `AUTH_ENFORCED = True`; non-loopback bind now possible only with explicit
   opt-in and an environment secret.
 
+## Phases 3-4: what exists
+
+- Domain: ULID ids, state machine with atomic compare-and-set transitions
+  (`WorkspaceStore.transition`), 9 built-in templates + admin custom templates (validated; no
+  local-process execution; `custom-` ids), resource profiles (users never supply raw numbers),
+  platform-aware availability (`templates.evaluate`) with honest reasons/remediation.
+- Runtimes: `fake` (tests), `docker` (argv-only, cap-drop ALL, no-new-privileges, non-root, pid/mem/cpu
+  limits, only mount is the data dir; flags checked against the real `docker --help`), `local`
+  (Termux: **no isolation**, process-group kill, env scrubbing, PID-reuse guard).
+  Podman and proot are not implemented.
+- Service (`app/services/workspaces.py`): create/start/stop/restart/reset/delete/update/activity.
+  Quotas (workspaces and concurrently active per user) are enforced inside the write transaction.
+  Ownership is enforced in the service (foreign ids -> 404, audited as `workspace.access_denied`).
+  Idempotency keys, per-owner unique names, authorized-use acknowledgement for security profiles.
+- Persistence: persistent data survives delete unless `delete_data` **and** the exact name are given;
+  disposable data is wiped on stop and delete; reset keeps data unless wipe + name confirmation.
+- Maintenance: idle marking/stop, boot + periodic reconciliation (abandoned jobs -> `failed`, dead
+  runtime -> `failed`), orphan detection. `python -m app cleanup` is a dry run; `--apply` removes
+  orphaned runtime resources and directories already marked purged. Retained data and directories with
+  no DB record are only reported, never deleted. The periodic thread only reports orphans.
+- API: `/templates` (+admin custom CRUD), `/workspaces` (+start/stop/restart/reset/activity/events),
+  `/settings/policy` (admin). Create/start/etc. return 202; progress is read via GET.
+
 ## Tests (actually run)
+
+
 
 ```
 cd backend && python3 -m unittest discover -s tests -t .
-Ran 168 tests ... OK
+Ran 307 tests ... OK
 ruff check .           -> All checks passed
 ```
 
@@ -92,6 +117,12 @@ ruff check .           -> All checks passed
   HttpOnly, CSRF rejection, cross-origin rejection, audit trail, restart keeps sessions and keeps
   setup closed, no passwords/tokens in log files.
 
+- Phase 3-4 mutation check: removing the ownership check, the workspace-quota check, or the CAS
+  status guard each makes tests fail.
+- Real-socket smoke test of the workspace API: anonymous 401, CSRF 403, and `template_unavailable`
+  with the Docker remediation text (this sandbox has no Docker daemon, so **no workspace was ever
+  started for real**).
+
 **Not run / not verifiable here:** mypy/pyright, Python 3.11/3.12, Argon2id backend, Windows,
 Termux, WSL, real Docker, PostgreSQL, any browser or frontend test, load/timing analysis of the
 login path (timing equalisation is coded, not measured).
@@ -102,4 +133,12 @@ login path (timing equalisation is coded, not measured).
   offloaded to a threadpool. Fine for the target scale, not load-tested.
 - No OIDC, no 2FA, no email-based reset.
 - Desktop streaming and browser terminal are reported as `not_implemented`, not faked.
-- Docker adapter (Phase 3) will be unit-tested against a mocked CLI only and labelled unverified.
+- Docker adapter is tested against a scripted CLI and the real `docker --help` only; first use on a
+  real host is a test.
+- Storage quota is for reporting/file-manager limits only; a workload can still write beyond it
+  (needs XFS project quotas or per-workspace filesystems).
+- Network policy is `none` or an ICC-disabled bridge. Egress filtering and cloud-metadata blocking
+  are deployment concerns (firewall rules), not enforced by the adapter.
+- Runtime adapters are chosen once, lazily, from detected capabilities: changing the platform
+  (e.g. starting Docker later) needs a service restart.
+- Deleting a persistent workspace retains its data on disk but there is no UI/API to re-attach it yet.

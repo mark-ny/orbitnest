@@ -280,10 +280,32 @@ def _features(mode: Mode, info: PlatformInfo, proot: RuntimeStatus | None) -> di
         features["proot_userland"] = FeatureStatus(
             state="unsupported", reason="PRoot userlands are only offered in Termux mode."
         )
-    # Honest placeholders until the phases that implement them are verified.
-    features["browser_terminal"] = FeatureStatus(
-        state="not_implemented", reason="Browser terminal is built in a later phase."
-    )
+    if mode in ("linux-docker", "windows-docker-desktop"):
+        features["browser_terminal"] = FeatureStatus(
+            state="available",
+            reason="Shell inside the workspace container (docker exec). Needs WebSocket support (the "
+            "'websockets' package) in the server environment.",
+        )
+    elif mode == "termux-local":
+        features["browser_terminal"] = FeatureStatus(
+            state="limited",
+            reason="A shell on this device as your own user, without isolation. Administrators only.",
+        )
+    else:
+        features["browser_terminal"] = FeatureStatus(
+            state="unsupported", reason="Terminals need a workspace runtime, and none is available."
+        )
+    if info.os_family == "windows":
+        features["file_manager"] = FeatureStatus(
+            state="unsupported",
+            reason="The symlink-safe file manager needs a POSIX host.",
+            remediation="Run the OrbitNest control plane inside WSL 2 instead of native Windows Python.",
+        )
+    else:
+        features["file_manager"] = FeatureStatus(
+            state="available", reason="Files are managed on the host and work while a workspace is stopped."
+        )
+    # Honest placeholder: no streaming stack is built or verified.
     features["desktop_streaming"] = FeatureStatus(
         state="not_implemented", reason="Browser/desktop streaming is built in a later phase."
     )

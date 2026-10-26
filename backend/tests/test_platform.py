@@ -123,7 +123,8 @@ class CapabilityTests(unittest.TestCase):
     def test_unimplemented_features_are_not_advertised(self) -> None:
         c = self.caps({}, "linux")
         self.assertEqual(c.features["desktop_streaming"].state, "not_implemented")
-        self.assertEqual(c.features["browser_terminal"].state, "not_implemented")
+        self.assertEqual(c.features["browser_terminal"].state, "available")
+        self.assertEqual(c.features["file_manager"].state, "available")
 
     def test_storage_writable_and_unwritable(self) -> None:
         self.assertTrue(self.caps({}, "linux").storage.writable)

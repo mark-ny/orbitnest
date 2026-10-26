@@ -139,7 +139,7 @@ class SecurityMiddlewareTests(TempDirMixin, unittest.TestCase):
             return JSONResponse({"n": len(await request.body())})
 
         app = create_app(make_settings(self.tmp, max_request_bytes=1024))
-        app.router.routes.append(Route("/sink", sink, methods=["POST"]))
+        app.router.routes.insert(0, Route("/sink", sink, methods=["POST"]))  # ahead of the static mount
         c = AsgiClient(app)
         r = c.post("/sink", chunks=[b"x" * 700, b"x" * 700])
         self.assertEqual(r.status, 413)

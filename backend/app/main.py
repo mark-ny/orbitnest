@@ -8,12 +8,14 @@ import re
 import threading
 import time
 from collections.abc import AsyncIterator, Callable
+from pathlib import Path
 
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.routing import Mount
+from starlette.staticfiles import StaticFiles
 
 from app.api import audit as audit_api
 from app.api import auth as auth_api
@@ -64,6 +66,16 @@ class CachedDetector:
                 self._value = self._detector()
                 self._at = now
             return self._value
+
+
+WEB_DIR = Path(__file__).parent / "web"
+
+
+def _frontend_routes() -> list[Mount]:
+    """The dependency-free web UI (no build step). Served after the API so /api/* always wins."""
+    if not (WEB_DIR / "index.html").is_file():
+        return []
+    return [Mount("/", app=StaticFiles(directory=WEB_DIR, html=True), name="web")]
 
 
 def create_app(
@@ -156,7 +168,7 @@ def create_app(
 
     app = Starlette(
         lifespan=lifespan,
-        routes=[Mount(API_PREFIX, routes=routes)],
+        routes=[Mount(API_PREFIX, routes=routes), *_frontend_routes()],
         middleware=middleware,
         exception_handlers={
             errors.AppError: errors.app_error_handler,

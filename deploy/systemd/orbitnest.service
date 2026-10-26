@@ -1,0 +1,31 @@
+# User or system unit for the OrbitNest control plane (Linux).
+# Install as a user service (no root):
+#   mkdir -p ~/.config/systemd/user && cp orbitnest.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now orbitnest
+#   loginctl enable-linger "$USER"      # keep it running after logout
+# Adjust the paths below to where install-linux.sh put things.
+[Unit]
+Description=OrbitNest Workspaces control plane
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/orbitnest/orbitnest.env
+WorkingDirectory=%h/orbitnest-src/backend
+ExecStart=%h/.local/share/orbitnest/venv/bin/python -m app serve
+Restart=on-failure
+RestartSec=3
+# Hardening. The service needs the Docker socket (via the docker group), so do not add
+# ProtectHome=true or PrivateDevices unless you test the Docker adapter afterwards.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=%h/.local/share/orbitnest
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=default.target

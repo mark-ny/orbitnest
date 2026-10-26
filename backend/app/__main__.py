@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
 from app.core.config import ConfigError, Settings
 
@@ -161,7 +162,44 @@ def cmd_cleanup(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_backup(args: argparse.Namespace) -> int:
+    from app.services.backup import BackupError, create_backup
+
+    settings = _settings()
+    try:
+        result = create_backup(
+            settings,
+            Path(args.dest or settings.data_dir / "backups"),
+            include_workspaces=args.include_workspaces,
+        )
+    except BackupError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"backup written: {result.path}")
+    print(f"includes signing key: {result.includes_secret}")
+    print(f"includes workspace data: {result.includes_workspaces}")
+    print("This archive holds password hashes and the signing key. Store it like a secret.")
+    return 0
+
+
+def cmd_restore(args: argparse.Namespace) -> int:
+    from app.services.backup import BackupError, restore_backup
+
+    if not args.archive:
+        print("error: restore requires --archive PATH", file=sys.stderr)
+        return 2
+    try:
+        names = restore_backup(_settings(), Path(args.archive))
+    except BackupError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"restored: {', '.join(names)}")
+    return 0
+
+
 COMMANDS = {
+    "backup": cmd_backup,
+    "restore": cmd_restore,
     "cleanup": cmd_cleanup,
     "serve": cmd_serve,
     "migrate": cmd_migrate,
@@ -184,6 +222,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--apply", action="store_true", help="cleanup: actually remove (default is a dry run)"
     )
+    parser.add_argument("--dest", help="backup: destination directory (default DATA_DIR/backups)")
+    parser.add_argument(
+        "--include-workspaces", action="store_true", help="backup: also archive workspace data"
+    )
+    parser.add_argument("--archive", help="restore: backup archive to restore")
     args = parser.parse_args(argv)
     if args.command in {"create-admin", "reset-password"} and not args.username:
         parser.error(f"{args.command} requires a username")

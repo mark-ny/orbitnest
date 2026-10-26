@@ -1,0 +1,16 @@
+# Caddy terminates TLS (automatic certificates) and proxies to OrbitNest on loopback.
+# Set in orbitnest.env:
+#   ORBITNEST_PUBLIC_URL=https://nest.example.com
+#   ORBITNEST_TRUSTED_PROXY=true
+nest.example.com {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+	# WebSockets (terminal) are proxied automatically. Uploads are limited by OrbitNest itself.
+	request_body {
+		max_size 2GB
+	}
+	reverse_proxy 127.0.0.1:8765
+}

@@ -1,0 +1,7 @@
+# Runtime dependencies (same as pyproject.toml). Install into a virtualenv.
+starlette>=1.7,<2
+pydantic>=2.13,<3
+uvicorn>=0.54,<1
+python-multipart>=0.0.32
+anyio>=4.15
+websockets>=13

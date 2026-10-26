@@ -28,16 +28,16 @@
 | T5 | Session theft / fixation | HttpOnly, SameSite cookies, Secure on HTTPS, new session per login, hashed tokens at rest, revocation | Implemented and tested (Phase 2) |
 | T6 | CSRF | Per-session HMAC CSRF token on every unsafe authenticated request, plus Origin check; login/setup/reset check Origin | Implemented and tested (Phase 2) |
 | T7 | IDOR/BOLA | Ownership check in the service layer on every workspace access; opaque IDs | Implemented and tested (service + HTTP; foreign ids return 404 and are audited; mutant caught) |
-| T8 | Path traversal / symlink escape in file manager | Canonical-path containment, reject symlinks that resolve outside root | Phase 6 |
+| T8 | Path traversal / symlink escape in file manager | Canonical-path containment, reject symlinks that resolve outside root | Implemented and tested (Phase 6): openat-style walk with O_NOFOLLOW and dir fds, so symlinks are never followed; atomic uploads; POSIX only (unsupported on native Windows) |
 | T9 | Command injection | No `shell=True`; argv lists only; schema-validated inputs | all phases |
 | T10 | SQL injection | Parameterized queries only | all phases |
-| T11 | XSS | Strict CSP, no inline script, output encoding in the UI | Phase 5 |
-| T12 | WebSocket auth bypass / cross-site WebSocket hijack | Authenticate each connection, validate Origin, authorize owner/admin | Phase 7/8 |
+| T11 | XSS | Strict CSP, no inline script, output encoding in the UI | Implemented (Phase 5): CSP without inline script/style, UI built with createElement/textContent only (no innerHTML), CSRF token kept in memory. Verified in Chromium: no CSP violations, hostile file name rendered inert. No automated browser test in the repo |
+| T12 | WebSocket auth bypass / cross-site WebSocket hijack | Authenticate each connection, validate Origin, authorize owner/admin | Implemented and tested (Phase 7): session-cookie auth plus Origin check on the WebSocket handshake, owner/admin authorization, limits per workspace/user. **The real wire protocol was not exercised** (no `websockets` package in the build sandbox); tests drive the ASGI interface |
 | T13 | Secret leakage in logs/errors | Redaction filter, no secrets in URLs | Phase 1 |
 | T14 | Insecure default config | Startup validation fails closed in production; no generated predictable secrets | Phase 1 |
 | T15 | Unauthenticated admin surface on a public interface | Refuse non-loopback bind without explicit opt-in and an env secret; route-guard test fails if any route is public without being allowlisted | Implemented and tested |
-| T16 | Resource exhaustion | Per-user quotas, request size limits, bounded buffers | Per-user workspace/running quotas enforced atomically (tested incl. concurrency); filesystem storage quota **not enforced** for workloads; Phases 6-7 pending |
-| T17 | Termux/PRoot mistaken for a sandbox | UI and docs label it "no isolation"; no claim otherwise | API reports `isolation: none` for local runtime; UI/docs pending (Phase 5/9) |
+| T16 | Resource exhaustion | Per-user quotas, request size limits, bounded buffers | Per-user workspace/running quotas, request and upload size limits, terminal limits (4 per workspace, 8 per user), idle/max terminal lifetime. Filesystem storage quota is reporting-only; a workload can still fill the disk (needs XFS project quotas or per-workspace filesystems) |
+| T17 | Termux/PRoot mistaken for a sandbox | UI and docs label it "no isolation"; no claim otherwise | Mitigated by labelling: capability report, API (`isolation: none`) and UI call local mode "no isolation"; local terminals are admin-only; docs/INSTALL.md repeats it |
 
 ## Residual risks (always listed)
 
@@ -51,6 +51,10 @@
 - PRoot and Termux-local mode provide no meaningful isolation.
 - Disposable-workspace deletion is ordinary filesystem deletion, not cryptographic erasure.
 - Kernel/runtime vulnerabilities can defeat container isolation.
+- A process started with `docker exec` for a terminal can outlive the browser connection if the
+  control plane is killed abruptly; the container is the boundary, and stopping the workspace ends it.
+- Backup archives contain password hashes and the signing key; whoever holds one can attack offline.
+- Mounting the Docker socket into a control-plane container (deploy/compose) is root-equivalent.
 
 ## Incident-response checklist (starter)
 

@@ -32,6 +32,7 @@ ruff check . && ruff format --check .
 
 ## Documentation
 
+- [Installation (Linux, Windows + WSL 2, Termux, VPS)](docs/INSTALL.md)
 - [Architecture and decision records](docs/ARCHITECTURE.md)
 - [Platform support matrix](docs/PLATFORM_SUPPORT.md)
 - [Threat model](docs/THREAT_MODEL.md)

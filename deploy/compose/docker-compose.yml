@@ -1,0 +1,36 @@
+# UNVERIFIED example: not run in the development sandbox. Read the warning before using it.
+#
+# WARNING: the control plane must talk to the Docker daemon to create workspaces. Mounting the
+# Docker socket gives this container root-equivalent control of the host. If OrbitNest is
+# compromised, so is the host. Prefer the native install (scripts/install-linux.sh + systemd) unless
+# you accept that, and consider a socket proxy that only allows the calls OrbitNest needs.
+#
+# Workspace data directories are bind-mounted into sibling containers by HOST path, so the data
+# directory must have the SAME absolute path inside and outside this container (set DATA_DIR).
+#
+# Usage:  cp ../../.env.example .env   # then set ORBITNEST_SECRET_KEY and DATA_DIR
+#         docker compose -f deploy/compose/docker-compose.yml --env-file .env up -d --build
+services:
+  orbitnest:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8765:8765"          # loopback only; put a TLS proxy in front
+    environment:
+      ORBITNEST_ENV: production
+      ORBITNEST_HOST: 0.0.0.0           # inside the container; the published port stays on loopback
+      ORBITNEST_ALLOW_NON_LOOPBACK: "true"
+      ORBITNEST_SECRET_KEY: ${ORBITNEST_SECRET_KEY:?set a random 32+ character secret}
+      ORBITNEST_DATA_DIR: ${DATA_DIR:?absolute host path, identical inside the container}
+      ORBITNEST_PUBLIC_URL: ${ORBITNEST_PUBLIC_URL:-}
+      ORBITNEST_COOKIE_SECURE: ${ORBITNEST_COOKIE_SECURE:-auto}
+    volumes:
+      - ${DATA_DIR}:${DATA_DIR}
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - ${DOCKER_GID:-999}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]

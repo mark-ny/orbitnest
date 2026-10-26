@@ -21,7 +21,7 @@ Last updated: 2026-10-25 (Phases 0-4 complete)
 | SQLAlchemy 2 + Alembic | stdlib `sqlite3` + checksum-verified SQL migration runner | not installable. **No PostgreSQL support yet** |
 | Argon2id | `PasswordHasher` interface; **scrypt (N=2^15, r=8, p=3) is what actually ran in tests**; Argon2id path is coded but **untested** (argon2-cffi unavailable) | argon2-cffi not installable |
 | pytest, httpx | stdlib `unittest` + custom ASGI client | not installable |
-| React + TS + Vite | **not built** | npm unreachable. Phase 5 is blocked; see below |
+| React + TS + Vite | Replaced by a dependency-free vanilla ES-module frontend (`backend/app/web`) | npm unreachable. No xterm.js either: a small in-repo VT emulator (`js/vt.js`) renders the terminal |
 | mypy / pyright | **not run** | not installed |
 
 ## Phase status
@@ -33,13 +33,13 @@ Last updated: 2026-10-25 (Phases 0-4 complete)
 | 2 Auth | Done (details below) |
 | 3 Domain and runtimes | Done (fake + local verified with real processes; Docker adapter **unverified against a daemon**) |
 | 4 Lifecycle and persistence | Done (details below) |
-| 5 Frontend | **Blocked** on npm. Fallback to decide: dependency-free static frontend |
-| 6 File manager | Not started |
-| 7 Terminal | Not started |
-| 8 Streaming | Not started; will stay disabled unless verifiable |
-| 9 Packaging | Not started |
-| 10 Security / QA | Not started |
-| 11 Release | Not started |
+| 5 Frontend | Done as a dependency-free SPA; checked by hand in Chromium (flows, CSP, phone layout); only the VT emulator has automated tests |
+| 6 File manager | Done (symlink-safe, POSIX only; tested incl. real-socket 7 MB round trip) |
+| 7 Terminal | Done at ASGI level; **real WebSocket wire protocol and a live terminal in a browser never ran** (no `websockets` package, no Docker here) |
+| 8 Streaming | **Not implemented, deliberately.** Reported as `not_implemented`; browser/desktop templates cannot be created |
+| 9 Packaging | Scripts, systemd, Caddy, Nginx, compose, backup/restore, docs written. Only backup/restore is tested; installers are syntax-checked only |
+| 10 Security / QA | In progress: threat model updated, CI workflow added, grep review done; no external review or pen test |
+| 11 Release | Not tagged: unverified on every target platform. Treat as 0.1.0 pre-release |
 
 ## Phase 1: what exists
 
@@ -101,7 +101,8 @@ Last updated: 2026-10-25 (Phases 0-4 complete)
 
 ```
 cd backend && python3 -m unittest discover -s tests -t .
-Ran 307 tests ... OK
+Ran 371 tests ... OK
+node --test frontend-tests/vt.test.mjs  -> 9 pass
 ruff check .           -> All checks passed
 ```
 
@@ -132,7 +133,11 @@ login path (timing equalisation is coded, not measured).
 - The synchronous auth handlers run short SQLite queries on the event loop; password hashing is
   offloaded to a threadpool. Fine for the target scale, not load-tested.
 - No OIDC, no 2FA, no email-based reset.
-- Desktop streaming and browser terminal are reported as `not_implemented`, not faked.
+- Desktop streaming is reported as `not_implemented`, not faked. The browser terminal is reported available in Docker modes, admin-only/limited in Termux.
+- Terminals need the `websockets` package (in requirements.txt, never installed or run in the build sandbox).
+- Processes started by `docker exec` for a terminal may outlive an abruptly killed control plane; stopping the workspace ends them.
+- The file manager is POSIX only; on native Windows it is reported unsupported (run in WSL 2).
+- Installers (Linux, Termux, Windows/WSL) and deploy configs were never run on their targets.
 - Docker adapter is tested against a scripted CLI and the real `docker --help` only; first use on a
   real host is a test.
 - Storage quota is for reporting/file-manager limits only; a workload can still write beyond it
@@ -142,3 +147,16 @@ login path (timing equalisation is coded, not measured).
 - Runtime adapters are chosen once, lazily, from detected capabilities: changing the platform
   (e.g. starting Docker later) needs a service restart.
 - Deleting a persistent workspace retains its data on disk but there is no UI/API to re-attach it yet.
+
+## Phases 5-9: what exists
+
+- Frontend served by the app from `backend/app/web` (strict CSP, no inline script, no innerHTML,
+  CSRF token in memory): setup/login/reset, workspace dashboard and detail, file manager, terminal
+  tab, admin users/policy/audit views. Deviation: no React/TS/Vite/xterm.js (npm unreachable).
+- File manager: list/read/upload/download/mkdir/rename/delete under a workspace's data directory,
+  works while the workspace is stopped, per-route upload limit.
+- Terminal: PTY over WebSocket, cookie auth + Origin check, limits and idle/max lifetime, local
+  runtime shells admin-only.
+- Packaging: `scripts/install-{linux.sh,termux.sh,windows.ps1}`, `deploy/{systemd,caddy,nginx,compose}`,
+  `python -m app backup|restore` (tested: round trip, hostile archives, no overwrite), `docs/INSTALL.md`.
+- CI: `.github/workflows/ci.yml` (never run; written for GitHub Actions).

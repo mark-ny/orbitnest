@@ -1,6 +1,6 @@
 // Shared state and page plumbing for all views.
 import { api } from "./api.js";
-import { clear, h, toast } from "./ui.js";
+import { clear, h, icon, themeButton, toast } from "./ui.js";
 
 export const state = { user: null, caps: null, timer: null, onLeave: null };
 export const root = document.getElementById("app");
@@ -47,22 +47,40 @@ export async function loadCaps(force = false) {
   return state.caps;
 }
 
+export function brand(href = "#/") {
+  return h("a", { class: "brand", href }, h("span", { class: "mark" }, logoMark()), "OrbitNest");
+}
+
 export function nav(active) {
-  const link = (href, label, key) => h("a", { href, text: label, "aria-current": active === key ? "page" : null });
+  const link = (href, label, key, ico) => h("a", { href, "aria-current": active === key ? "page" : null }, icon(ico), label);
+  const initial = (state.user.username[0] || "?").toUpperCase();
+  const out = h("button", { class: "ghost iconbtn", type: "button", "aria-label": "Sign out", title: "Sign out", onclick: async () => {
+    try { await api("POST", "/auth/logout"); } catch { /* already signed out */ }
+    location.hash = "#/"; location.reload();
+  } }, icon("logout"));
   return h("header", { class: "topbar" },
-    h("a", { class: "brand", href: "#/" }, logoMark(), "OrbitNest"),
+    brand(),
     h("nav", { class: "nav", "aria-label": "Main" },
-      link("#/", "Workspaces", "workspaces"),
-      isAdmin() ? link("#/admin/users", "Admin", "admin") : null,
-      link("#/account", "Account", "account")),
+      link("#/", "Workspaces", "workspaces", "grid"),
+      isAdmin() ? link("#/admin/users", "Admin", "admin", "settings") : null,
+      link("#/account", "Account", "account", "user")),
     h("div", { class: "grow" }),
-    h("span", { class: "muted", text: `${state.user.username} (${state.user.role})` }));
+    themeButton(),
+    h("div", { class: "userbox" }, h("span", { class: "avatar", "aria-hidden": "true", text: initial }),
+      h("div", { class: "who" }, state.user.username, h("small", { text: state.user.role.replace("_", " ") }))),
+    out);
 }
 
 export function page(active, ...content) {
   leave();
   clear(root);
   root.append(nav(active), h("main", { class: "page stack" }, ...content));
+}
+
+export function full(node) {
+  leave();
+  clear(root);
+  root.append(node);
 }
 
 export function bare(...content) {
@@ -79,12 +97,12 @@ export function modeBanner() {
   const caps = state.caps;
   if (!caps) return null;
   if (caps.mode === "termux-local") {
-    return h("div", { class: "banner warn" }, h("strong", { text: "No isolation. " }),
-      "This device runs workspaces as ordinary processes under your own Termux user. Docker is not available in ordinary Termux, and PRoot is not a security boundary. Only run code you trust.");
+    return h("div", { class: "banner warn" }, icon("alert"), h("div", {}, h("strong", { text: "No isolation. " }),
+      "This device runs workspaces as ordinary processes under your own Termux user. Docker is not available in ordinary Termux, and PRoot is not a security boundary. Only run code you trust."));
   }
   const f = caps.features?.container_workspaces;
   if (f && f.state !== "available") {
-    return h("div", { class: "banner warn" }, h("strong", { text: "Workspaces unavailable. " }), f.reason, f.remediation ? ` ${f.remediation}` : "");
+    return h("div", { class: "banner warn" }, icon("alert"), h("div", {}, h("strong", { text: "Workspaces unavailable. " }), f.reason, f.remediation ? ` ${f.remediation}` : ""));
   }
   return null;
 }

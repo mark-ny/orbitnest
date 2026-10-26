@@ -27,9 +27,13 @@ from app.runtimes.base import RuntimeAdapter, RuntimeFailure, RuntimeSpec, Runti
 from app.runtimes.pty_shell import PtyShell, ShellSession
 
 NETWORK_NAME = "orbitnest-workspaces"
-RESOURCE_ID_RE = re.compile(r"^[a-f0-9]{12,64}$")
+RESOURCE_ID_RE = re.compile(r"^[a-f0-9]{12,64}\Z")
 LABEL_MANAGED = "orbitnest.managed"
 LABEL_WORKSPACE = "orbitnest.workspace"
+
+# Viewer assets (the noVNC client) live at a fixed, root-owned path inside the image.
+ASSET_ROOT = "/usr/share/novnc"
+ASSET_PATH_RE = re.compile(r"^(core|vendor)/[A-Za-z0-9._/-]{1,150}\.js\Z")
 
 CommandRunner = Callable[[Sequence[str], float], CommandResult]
 
@@ -167,6 +171,8 @@ class DockerRuntime(RuntimeAdapter):
             network,
             "--ipc",
             "private",
+            "--shm-size",
+            f"{spec.shm_mb}m",
             "--tmpfs",
             "/tmp:rw,nosuid,nodev,size=256m",  # noqa: S108 - container-internal tmpfs
             "--mount",
@@ -288,6 +294,46 @@ class DockerRuntime(RuntimeAdapter):
             raise RuntimeFailure(
                 f"could not open a terminal: {exc.strerror or 'os error'}", operation="shell"
             ) from None
+
+    def _exec_env(self) -> dict[str, str]:
+        return {
+            k: os.environ[k]
+            for k in ("PATH", "HOME", "DOCKER_HOST", "DOCKER_CONFIG", "DOCKER_CONTEXT")
+            if k in os.environ
+        }
+
+    def has_image(self, image: str) -> bool | None:
+        result = self._docker(["image", "inspect", "--format", "{{.Id}}", image], timeout=15)
+        if result.returncode == 0:
+            return True
+        if "no such image" in result.stderr.lower() or "no such object" in result.stderr.lower():
+            return False
+        return None  # daemon trouble: do not claim either way
+
+    def stream_bridge_argv(self, resource_id: str, port: int) -> tuple[list[str], dict[str, str]]:
+        """`docker exec -i` running socat between stdio and the in-container VNC port."""
+        if not 1 <= int(port) <= 65535:
+            raise RuntimeFailure("invalid stream port", operation="stream")
+        return (
+            [
+                self.docker_bin,
+                "exec",
+                "-i",
+                self._rid(resource_id),
+                "socat",
+                "-",
+                f"TCP:127.0.0.1:{int(port)}",
+            ],
+            self._exec_env(),
+        )
+
+    def asset_argv(self, resource_id: str, path: str) -> tuple[list[str], dict[str, str]]:
+        if not ASSET_PATH_RE.match(path) or ".." in path.split("/"):
+            raise RuntimeFailure("invalid asset path", operation="stream")
+        return (
+            [self.docker_bin, "exec", self._rid(resource_id), "cat", f"{ASSET_ROOT}/{path}"],
+            self._exec_env(),
+        )
 
     def list_managed(self) -> dict[str, dict[str, str]]:
         result = self._check(

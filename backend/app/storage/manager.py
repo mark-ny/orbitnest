@@ -16,7 +16,7 @@ import re
 import shutil
 from pathlib import Path
 
-ID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
+ID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}\Z")
 CONTAINER_UID = 1000
 
 

@@ -87,6 +87,52 @@ class ScriptedDocker:
         return [c[1] for c in self.calls]
 
 
+class StreamArgvTests(unittest.TestCase):
+    def rt(self):
+        return DockerRuntime(run=ScriptedDocker(), user="1000:1000")
+
+    def test_shm_size_is_set_and_no_port_is_ever_published(self) -> None:
+        argv = self.rt().build_create_argv(make_spec("/srv/x", shm_mb=512, stream_port=5900))
+        self.assertEqual(argv[argv.index("--shm-size") + 1], "512m")
+        self.assertFalse(FORBIDDEN_FLAGS & set(argv))
+        self.assertFalse(any(a.startswith("--publish") or a == "-p" for a in argv))
+
+    def test_bridge_is_a_docker_exec_pipe_to_loopback_inside_the_container(self) -> None:
+        argv, _env = self.rt().stream_bridge_argv(CID, 5900)
+        self.assertEqual(argv, ["docker", "exec", "-i", CID, "socat", "-", "TCP:127.0.0.1:5900"])
+        self.assertNotIn("-t", argv)  # no tty: the stream must stay binary-clean
+        for bad in (0, 70000):
+            with self.assertRaises(RuntimeFailure):
+                self.rt().stream_bridge_argv(CID, bad)
+        with self.assertRaises(RuntimeFailure):
+            self.rt().stream_bridge_argv("not-an-id; rm -rf /", 5900)
+
+    def test_asset_paths_are_confined_to_the_novnc_directory(self) -> None:
+        argv, _env = self.rt().asset_argv(CID, "core/rfb.js")
+        self.assertEqual(argv, ["docker", "exec", CID, "cat", "/usr/share/novnc/core/rfb.js"])
+        for bad in (
+            "../etc/passwd",
+            "core/../../x.js",
+            "/etc/passwd",
+            "core/x.sh",
+            "app/ui.js",
+            "-core/x.js",
+            "core/x.js\n",
+        ):
+            with self.subTest(path=bad), self.assertRaises(RuntimeFailure):
+                self.rt().asset_argv(CID, bad)
+
+    def test_has_image(self) -> None:
+        cli = ScriptedDocker()
+        rt = DockerRuntime(run=cli, user="1000:1000")
+        cli.rc_override["image"] = CommandResult(0, "sha256:abc", "")
+        self.assertIs(rt.has_image("orbitnest/stream-tor:1"), True)
+        cli.rc_override["image"] = CommandResult(1, "", "Error: No such image: x")
+        self.assertIs(rt.has_image("orbitnest/stream-tor:1"), False)
+        cli.rc_override["image"] = CommandResult(1, "", "Cannot connect to the Docker daemon")
+        self.assertIsNone(rt.has_image("orbitnest/stream-tor:1"))
+
+
 class ArgvTests(unittest.TestCase):
     def build(self, **kw):
         rt = DockerRuntime(run=ScriptedDocker(), user="1000:1000")

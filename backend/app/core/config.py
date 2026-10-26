@@ -97,6 +97,9 @@ class Settings(BaseModel):
     max_upload_mb: int = Field(default=100, ge=1, le=2048)
     max_terminals_per_workspace: int = Field(default=4, ge=1, le=32)
     max_terminals_per_user: int = Field(default=8, ge=1, le=64)
+    max_streams_per_workspace: int = Field(default=2, ge=1, le=8)
+    max_streams_per_user: int = Field(default=4, ge=1, le=16)
+    stream_max_hours: int = Field(default=8, ge=1, le=72)
     terminal_idle_minutes: int = Field(default=30, ge=1, le=1440)
     terminal_max_hours: int = Field(default=8, ge=1, le=72)
     max_request_bytes: int = Field(default=1_048_576, ge=1_024, le=64 * 1024 * 1024)
@@ -229,6 +232,9 @@ class Settings(BaseModel):
             "max_upload_mb",
             "max_terminals_per_workspace",
             "max_terminals_per_user",
+            "max_streams_per_workspace",
+            "max_streams_per_user",
+            "stream_max_hours",
             "terminal_idle_minutes",
             "terminal_max_hours",
             "session_idle_minutes",

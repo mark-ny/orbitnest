@@ -20,6 +20,7 @@ from starlette.staticfiles import StaticFiles
 from app.api import audit as audit_api
 from app.api import auth as auth_api
 from app.api import files as files_api
+from app.api import stream as stream_api
 from app.api import system, users
 from app.api import terminal as terminal_api
 from app.api import workspaces as workspaces_api
@@ -37,6 +38,7 @@ from app.runtimes.factory import build_runtimes
 from app.services.files import FileService
 from app.services.jobs import JobRunner, ThreadRunner
 from app.services.maintenance import MaintenanceThread
+from app.services.streams import StreamService
 from app.services.templates import TemplateRegistry
 from app.services.terminals import TerminalService
 from app.services.workspace_store import WorkspaceStore
@@ -113,7 +115,7 @@ def create_app(
             route_limits=[
                 (
                     "PUT",
-                    re.compile(r"^/api/v1/workspaces/[0-9A-Z]{26}/files/content$"),
+                    re.compile(r"^/api/v1/workspaces/[0-9A-Z]{26}/files/content\Z"),
                     settings.max_upload_mb * 1024 * 1024,
                 )
             ],
@@ -139,6 +141,7 @@ def create_app(
         *workspaces_api.routes,
         *files_api.routes,
         *terminal_api.routes,
+        *stream_api.routes,
     ]
     detector = CachedDetector(capability_detector or (lambda: detect_capabilities(settings.data_dir)))
     registry = TemplateRegistry(db)
@@ -154,6 +157,7 @@ def create_app(
         capabilities=detector,
     )
     terminals = TerminalService(workspace_service, settings)
+    streams = StreamService(workspace_service, settings)
     maintenance = MaintenanceThread(workspace_service, settings.maintenance_interval_seconds)
 
     @contextlib.asynccontextmanager
@@ -164,6 +168,7 @@ def create_app(
         finally:
             maintenance.stop()
             terminals.close_all()
+            streams.close_all()
             workspace_service.runner.shutdown()
 
     app = Starlette(
@@ -184,6 +189,7 @@ def create_app(
     app.state.files = FileService(workspace_service, settings)
     app.state.maintenance = maintenance
     app.state.terminals = terminals
+    app.state.streams = streams
     return app
 
 

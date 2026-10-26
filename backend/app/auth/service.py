@@ -32,7 +32,7 @@ from app.services.audit import RequestContext
 
 RESET_TTL = timedelta(minutes=30)
 TOUCH_INTERVAL = timedelta(seconds=60)
-USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$")
+USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,31}\Z")
 MAX_LOGIN_USERNAME = 64
 
 

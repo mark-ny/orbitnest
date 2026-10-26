@@ -1,0 +1,32 @@
+#!/bin/sh
+# Starts a virtual display, a window manager and a VNC server that listens ONLY on the container's
+# loopback, then runs the given command in a restart loop. The control plane reaches the VNC port
+# with `docker exec ... socat`; nothing is published on the host.
+set -eu
+
+export DISPLAY=:0
+RES="${ORBITNEST_RESOLUTION:-1280x720x24}"
+mkdir -p "${HOME:-/home/workspace}" 2>/dev/null || true
+
+Xvfb :0 -screen 0 "$RES" -nolisten tcp >/dev/null 2>&1 &
+i=0
+while [ ! -S /tmp/.X11-unix/X0 ]; do
+  i=$((i + 1))
+  if [ "$i" -gt 100 ]; then echo "X server did not start" >&2; exit 1; fi
+  sleep 0.1
+done
+
+if [ "${ORBITNEST_WM:-openbox}" != "none" ]; then
+  openbox >/dev/null 2>&1 &
+fi
+
+x11vnc -display :0 -localhost -rfbport 5900 -forever -shared -nopw -noxdamage -quiet \
+  >/dev/null 2>&1 &
+
+trap 'exit 0' TERM INT
+
+# Relaunch the application if the user closes it, so the screen never goes blank for good.
+while :; do
+  "$@" || true
+  sleep 1
+done

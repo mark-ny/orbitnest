@@ -34,6 +34,7 @@ STATE_LABELS: Final[dict[str, str]] = {
 MATRIX: Final[dict[str, tuple[str, str, str, str]]] = {
     "browser-chromium": ("full", "full", "remote", "full"),
     "browser-firefox": ("full", "full", "remote", "full"),
+    "browser-tor": ("full", "full", "remote", "full"),
     "desktop-ubuntu": ("full", "full", "remote", "full"),
     "desktop-kali": ("limited", "limited", "remote", "limited"),
     "terminal-ubuntu": ("full", "full", "limited", "full"),
@@ -46,6 +47,7 @@ MATRIX: Final[dict[str, tuple[str, str, str, str]]] = {
 
 MATRIX_NOTES: Final[dict[str, str]] = {
     "desktop-kali": "No verified maintained image is configured; disabled. Authorized security work only.",
+    "browser-tor": "x86_64 only; needs outbound access. The build downloads and verifies Tor Browser.",
     "terminal-ubuntu": "Termux: would use proot-distro (no isolation).",
     "security-lab": "Authorized security work only. Windows: limited by WSL 2 networking.",
     "dev-python": "Termux: local folder and local toolchain, no isolation.",
@@ -56,17 +58,11 @@ MATRIX_NOTES: Final[dict[str, str]] = {
 # Capabilities that are designed but not implemented in this build. A pair affected by a blocker
 # is not creatable regardless of its matrix state. Keep in step with BUILD_STATUS.md.
 BLOCKERS: Final[dict[str, str]] = {
-    "streaming": "Browser/desktop streaming gateway is not implemented yet.",
     "proot": "The proot-distro runtime adapter is not implemented yet.",
 }
 
 # Which blocker (if any) applies to a profile in which mode.
 BLOCKED: Final[dict[tuple[str, str], str]] = {
-    **{
-        (p, m): "streaming"
-        for p in ("browser-chromium", "browser-firefox", "desktop-ubuntu", "desktop-kali")
-        for m in ("linux-docker", "windows-docker-desktop", "termux-remote-client")
-    },
     ("terminal-ubuntu", "termux-local"): "proot",
 }
 

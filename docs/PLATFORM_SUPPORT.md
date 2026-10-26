@@ -30,10 +30,11 @@ dashboard disables creation and says why.
 <!-- MATRIX:BEGIN -->
 | Profile | Linux + Docker | Windows + Docker Desktop (WSL 2) | Termux local | Termux to remote host | Notes |
 |---|---|---|---|---|---|
-| `browser-chromium` | Full (blocked: streaming) | Full (blocked: streaming) | Remote host required | Full (blocked: streaming) |  |
-| `browser-firefox` | Full (blocked: streaming) | Full (blocked: streaming) | Remote host required | Full (blocked: streaming) |  |
-| `desktop-ubuntu` | Full (blocked: streaming) | Full (blocked: streaming) | Remote host required | Full (blocked: streaming) |  |
-| `desktop-kali` | Limited (blocked: streaming) | Limited (blocked: streaming) | Remote host required | Limited (blocked: streaming) | No verified maintained image is configured; disabled. Authorized security work only. |
+| `browser-chromium` | Full | Full | Remote host required | Full |  |
+| `browser-firefox` | Full | Full | Remote host required | Full |  |
+| `browser-tor` | Full | Full | Remote host required | Full | x86_64 only; needs outbound access. The build downloads and verifies Tor Browser. |
+| `desktop-ubuntu` | Full | Full | Remote host required | Full |  |
+| `desktop-kali` | Limited | Limited | Remote host required | Limited | No verified maintained image is configured; disabled. Authorized security work only. |
 | `terminal-ubuntu` | Full | Full | Limited (blocked: proot) | Full | Termux: would use proot-distro (no isolation). |
 | `dev-python` | Full | Full | Limited | Full | Termux: local folder and local toolchain, no isolation. |
 | `dev-node` | Full | Full | Limited | Full | Termux: local folder and local toolchain, no isolation. |
@@ -44,8 +45,8 @@ dashboard disables creation and says why.
 
 Notes:
 
-- Streamed desktops/browsers depend on the Phase 8 gateway. Until that phase is complete and
-  verified, `BUILD_STATUS.md` records streaming as **not implemented** and those profiles cannot be created.
+- Streamed browsers and desktops are built locally from `docker/` (`python -m app build-images`) and
+  stay unavailable until their image exists. They need Docker; streaming is not offered for local Termux workspaces.
 - Architecture matters: images are assumed `amd64`. On `arm64` hosts (Apple silicon under
   Docker Desktop, Android devices, ARM VPS) availability is per image and is reported by the
   capability endpoint rather than assumed.

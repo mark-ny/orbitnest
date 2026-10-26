@@ -30,7 +30,7 @@ from app.services import audit, lifecycle, resources
 from app.services import policy as policy_mod
 from app.services.audit import RequestContext
 from app.services.jobs import JobRunner
-from app.services.templates import Template, TemplateRegistry, evaluate
+from app.services.templates import Availability, Template, TemplateRegistry, evaluate
 from app.services.workspace_store import QuotaExceeded, Workspace, WorkspaceStore
 from app.storage.manager import StorageError, StorageManager
 
@@ -39,10 +39,10 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("orbitnest.workspaces")
 
-NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$")
-LABEL_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,30}$")
-LABEL_VALUE_RE = re.compile(r"^[A-Za-z0-9._ -]{0,63}$")
-IDEMPOTENCY_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}\Z")
+LABEL_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,30}\Z")
+LABEL_VALUE_RE = re.compile(r"^[A-Za-z0-9._ -]{0,63}\Z")
+IDEMPOTENCY_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}\Z")
 MAX_LABELS = 10
 MAX_IDLE_MINUTES = 60 * 24 * 14
 PROVISION_MIN_ABANDON_MINUTES = 20  # an image pull may legitimately take a while
@@ -112,6 +112,7 @@ class WorkspaceService:
         self._clock = clock
         self._now = now
         self._inflight: set[str] = set()
+        self._image_cache: dict[str, tuple[float, bool | None]] = {}
         # Called with a workspace id when its runtime is about to stop, reset or go away.
         self.on_inactive: list[Callable[[str], None]] = []
         self._lock = threading.Lock()
@@ -122,6 +123,20 @@ class WorkspaceService:
             src = self._runtimes_source
             self._runtimes = dict(src() if callable(src) else src)
         return self._runtimes
+
+    def _image_present(self, template: Template) -> bool | None:
+        """Cached (10 s) check that a locally built template image exists."""
+        now = time.monotonic()
+        cached = self._image_cache.get(template.image)
+        if cached and now - cached[0] < 10:
+            return cached[1]
+        adapter = self.adapters().get("docker")
+        found = adapter.has_image(template.image) if adapter else None
+        self._image_cache[template.image] = (now, found)
+        return found
+
+    def availability(self, template: Template) -> Availability:
+        return evaluate(template, self.capabilities(), image_present=self._image_present)
 
     def _notify_inactive(self, workspace_id: str) -> None:
         for hook in self.on_inactive:
@@ -295,7 +310,7 @@ class WorkspaceService:
         template = self.registry.get(template_id)
         if template is None:
             raise errors.AppError(errors.NOT_FOUND, "Template not found.", 404)
-        avail = evaluate(template, self.capabilities())
+        avail = self.availability(template)
         adapter = self.adapters().get(avail.runtime or "")
         if not avail.creatable or adapter is None:
             reason = avail.reason or "No runtime is available for this template on this host."
@@ -567,7 +582,7 @@ class WorkspaceService:
             raise errors.AppError(
                 errors.TEMPLATE_UNAVAILABLE, "This workspace's template no longer exists.", 409
             )
-        avail = evaluate(template, self.capabilities())
+        avail = self.availability(template)
         if not avail.creatable or ws.runtime not in self.adapters():
             raise errors.AppError(
                 errors.TEMPLATE_UNAVAILABLE,
@@ -592,6 +607,8 @@ class WorkspaceService:
             capabilities=template.capabilities,
             healthcheck=template.healthcheck,
             local_command=template.local_command,
+            shm_mb=template.shm_mb,
+            stream_port=template.stream_port,
             labels={LABEL_WORKSPACE: ws.id},
         )
 

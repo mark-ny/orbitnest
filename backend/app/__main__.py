@@ -162,6 +162,29 @@ def cmd_cleanup(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_build_images(args: argparse.Namespace) -> int:
+    import subprocess
+
+    from app.services import images
+
+    names = [n for n in [args.username, *args.more] if n] or None
+    try:
+        steps = images.plan(names)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if not images.docker_dir().is_dir():
+        print(f"error: {images.docker_dir()} not found (run from a source checkout)", file=sys.stderr)
+        return 1
+    for step in steps:
+        print("+ " + " ".join(step), flush=True)
+        if subprocess.run(step, check=False).returncode != 0:  # noqa: S603 - argv list from a fixed plan
+            print("error: image build failed; see the output above", file=sys.stderr)
+            return 1
+    print("images built. Restart is not needed; reload the Templates page.")
+    return 0
+
+
 def cmd_backup(args: argparse.Namespace) -> int:
     from app.services.backup import BackupError, create_backup
 
@@ -198,6 +221,7 @@ def cmd_restore(args: argparse.Namespace) -> int:
 
 
 COMMANDS = {
+    "build-images": cmd_build_images,
     "backup": cmd_backup,
     "restore": cmd_restore,
     "cleanup": cmd_cleanup,
@@ -222,12 +246,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--apply", action="store_true", help="cleanup: actually remove (default is a dry run)"
     )
+    parser.add_argument("more", nargs="*", help="build-images: further image names")
     parser.add_argument("--dest", help="backup: destination directory (default DATA_DIR/backups)")
     parser.add_argument(
         "--include-workspaces", action="store_true", help="backup: also archive workspace data"
     )
     parser.add_argument("--archive", help="restore: backup archive to restore")
     args = parser.parse_args(argv)
+    if args.command != "build-images" and args.more:
+        parser.error("unexpected extra arguments")
     if args.command in {"create-admin", "reset-password"} and not args.username:
         parser.error(f"{args.command} requires a username")
     return COMMANDS[args.command](args)

@@ -5,7 +5,7 @@
 A self-hosted workspace platform: a web control plane that creates, runs and manages isolated
 environments (browsers, desktops, terminals, dev environments) on a container runtime.
 
-> **Status: early build.** See [`BUILD_STATUS.md`](BUILD_STATUS.md) for exactly what exists, what
+> **Status: 0.1.0 pre-release, not verified on Termux, Windows, WSL or against a real Docker daemon.** See [`BUILD_STATUS.md`](BUILD_STATUS.md) for exactly what exists, what
 > has been tested, and what has not. Nothing here is a finished product yet.
 > The name "OrbitNest" has not been checked for trademark or domain availability.
 > OrbitNest is independent and not affiliated with Kasm Technologies.

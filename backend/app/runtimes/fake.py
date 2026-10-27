@@ -166,6 +166,8 @@ class FakeRuntime(RuntimeAdapter):
         res = self._get(resource_id)
         if res.state != "running":
             raise RuntimeFailure("workspace is not running", operation="stream")
+        if path in getattr(self, "missing_assets", ()):
+            return ([sys.executable, "-c", "import sys;sys.exit(1)"], {})  # like `cat` on a missing file
         code = "import sys;sys.stdout.buffer.write(b'// fake asset ' + sys.argv[1].encode())"
         return ([sys.executable, "-c", code, path], {})
 

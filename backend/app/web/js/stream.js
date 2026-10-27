@@ -51,10 +51,11 @@ export function screenTab(ws, pane, tpl) {
     say("Connecting…", tpl?.id === "browser-tor" ? "Tor Browser can take a minute to connect to the Tor network on first start." : "Starting the stream.", null);
     status.textContent = "Connecting…";
     let Client;
-    try { Client = await loadClient(); } catch {
+    try { Client = await loadClient(); } catch (ex) {
+      console.error("OrbitNest viewer load failed:", ex);
       connecting = false;
       status.textContent = "Viewer unavailable";
-      say("The viewer could not be loaded", "The workspace image may be missing its viewer files. Rebuild it with: python -m app build-images", h("button", { onclick: connect, text: "Try again" }));
+      say("The viewer could not be loaded", `The viewer script failed to load or run (${ex && ex.message ? ex.message : "unknown error"}). Open the browser console for details.`, h("button", { onclick: connect, text: "Try again" }));
       return;
     }
     const scheme = location.protocol === "https:" ? "wss" : "ws";

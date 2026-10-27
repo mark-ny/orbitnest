@@ -31,6 +31,40 @@ if TYPE_CHECKING:
 
 ASSET_RE = re.compile(r"^(core|vendor)/[A-Za-z0-9._/-]{1,150}\.js\Z")
 MAX_ASSET_BYTES = 2 * 1024 * 1024
+
+# Debian's novnc package omits this tiny pako module although core/inflator.js and deflator.js import
+# it, which breaks the whole viewer. It is a plain data holder (pako 2.x, MIT licence), so the control
+# plane supplies it only when the image does not have it. Keyed by exact path.
+FALLBACK_ASSETS: dict[str, bytes] = {
+    "vendor/pako/lib/zlib/zstream.js": b"""// Supplied by OrbitNest (pako, MIT).
+function ZStream() {
+  /* next input byte */
+  this.input = null; // JS specific, because we have no pointers
+  this.next_in = 0;
+  /* number of bytes available at input */
+  this.avail_in = 0;
+  /* total number of input bytes read so far */
+  this.total_in = 0;
+  /* next output byte should be put there */
+  this.output = null; // JS specific, because we have no pointers
+  this.next_out = 0;
+  /* remaining free space at output */
+  this.avail_out = 0;
+  /* total number of bytes output so far */
+  this.total_out = 0;
+  /* last error message, NULL if no error */
+  this.msg = ''/*Z_NULL*/;
+  /* not visible by applications */
+  this.state = null;
+  /* best guess about the data type: binary or text */
+  this.data_type = 2/*Z_UNKNOWN*/;
+  /* adler32 value of the uncompressed data */
+  this.adler = 0;
+}
+
+export default ZStream;
+""",
+}
 CACHE_ENTRIES = 256
 CACHE_BYTES = 24 * 1024 * 1024
 

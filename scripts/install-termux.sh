@@ -30,7 +30,7 @@ fi
 # pydantic-core is a Rust extension. On Termux there may be no prebuilt wheel, so pip compiles it,
 # which can take many minutes and several hundred MB. ANDROID_API_LEVEL is needed by some builds.
 export ANDROID_API_LEVEL="${ANDROID_API_LEVEL:-$(getprop ro.build.version.sdk 2>/dev/null || echo 24)}"
-export CARGO_BUILD_TARGET="${CARGO_BUILD_TARGET:-}"
+unset CARGO_BUILD_TARGET  # an empty value makes cargo fail with "target was empty"
 "$VENV/bin/python" -m pip install --upgrade pip
 "$VENV/bin/python" -m pip install -r "$REPO_DIR/backend/requirements.txt" ||
   die "dependency install failed. See docs/TERMUX.md (troubleshooting) for the pydantic-core build notes."

@@ -22,7 +22,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from app.auth.deps import authenticate, authenticate_ws, request_context
 from app.auth.policy import Perm
 from app.core import errors
-from app.services.streams import MAX_ASSET_BYTES, StreamService, StreamSession
+from app.services.streams import FALLBACK_ASSETS, MAX_ASSET_BYTES, StreamService, StreamSession
 
 log = logging.getLogger("orbitnest.stream")
 
@@ -70,7 +70,12 @@ async def asset(request: Request) -> Response:
     data = svc.cache_get(target.image, path)
     if data is None:
         argv, env = svc.asset_command(target, path)
-        data = await _run_asset(argv, env)
+        try:
+            data = await _run_asset(argv, env)
+        except errors.AppError as exc:
+            if exc.status_code != 404 or path not in FALLBACK_ASSETS:
+                raise
+            data = FALLBACK_ASSETS[path]
         svc.cache_put(target.image, path, data)
     return Response(
         data,

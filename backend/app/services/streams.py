@@ -36,7 +36,7 @@ MAX_ASSET_BYTES = 2 * 1024 * 1024
 # it, which breaks the whole viewer. It is a plain data holder (pako 2.x, MIT licence), so the control
 # plane supplies it only when the image does not have it. Keyed by exact path.
 FALLBACK_ASSETS: dict[str, bytes] = {
-    "vendor/pako/lib/zlib/zstream.js": b"""// Supplied by OrbitNest (pako, MIT); absent from the distro package.
+    "vendor/pako/lib/zlib/zstream.js": b"""// Supplied by OrbitNest (pako, MIT).
 function ZStream() {
   /* next input byte */
   this.input = null; // JS specific, because we have no pointers

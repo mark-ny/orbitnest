@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from urllib.parse import urlsplit
 
-from app.auth import ratelimit, setup_token
+from app.auth import ratelimit, setup_token, totp
 from app.auth.passwords import (
     MAX_PASSWORD_BYTES,
     MAX_PASSWORD_CHARS,
@@ -299,7 +299,9 @@ class AuthService:
         return user, token, session_id
 
     # -- login / logout --------------------------------------------------------------------
-    def login(self, *, username: str, password: str, ctx: RequestContext) -> tuple[User, str, str]:
+    def login(
+        self, *, username: str, password: str, ctx: RequestContext, code: str | None = None
+    ) -> tuple[User, str, str]:
         now = self.now()
         username = username.strip()[:MAX_LOGIN_USERNAME]
         ip_key = ctx.ip or "unknown"
@@ -341,6 +343,30 @@ class AuthService:
             )
             raise errors.AppError(errors.INVALID_CREDENTIALS, "Invalid username or password.", 401)
 
+        if self._mfa_enabled(row["id"]):
+            if code is None or not code.strip():
+                audit.record(
+                    self.db,
+                    action="auth.login",
+                    outcome="denied",
+                    actor_user_id=row["id"],
+                    ctx=ctx,
+                    details={"reason": "mfa_required"},
+                )
+                raise errors.AppError(errors.MFA_REQUIRED, "Enter the code from your authenticator app.", 401)
+            if not self._consume_second_factor(row["id"], code):
+                self.limiter.record_failure(ratelimit.LOGIN_USER, username, now)
+                self.limiter.record_failure(ratelimit.LOGIN_IP, ip_key, now)
+                audit.record(
+                    self.db,
+                    action="auth.login",
+                    outcome="failure",
+                    actor_user_id=row["id"],
+                    ctx=ctx,
+                    details={"reason": "bad_second_factor"},
+                )
+                raise errors.AppError(errors.INVALID_CREDENTIALS, "Invalid username, password or code.", 401)
+
         new_hash = self.hasher.hash(password) if self.hasher.needs_rehash(row["password_hash"]) else None
         with self.db.transaction() as conn:
             token, session_id = self._create_session(conn, row["id"], ctx)
@@ -360,6 +386,206 @@ class AuthService:
         user = self.get_user(row["id"])
         assert user is not None
         return user, token, session_id
+
+    # -- two-factor authentication (TOTP) -----------------------------------------------------
+    def _mfa_enabled(self, user_id: str) -> bool:
+        with self.db.connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM user_totp WHERE user_id = ? AND confirmed_at IS NOT NULL", (user_id,)
+            ).fetchone()
+        return row is not None
+
+    def mfa_status(self, user_id: str) -> dict[str, object]:
+        with self.db.connect() as conn:
+            row = conn.execute("SELECT confirmed_at FROM user_totp WHERE user_id = ?", (user_id,)).fetchone()
+            left = conn.execute(
+                "SELECT COUNT(*) AS n FROM recovery_codes WHERE user_id = ? AND used_at IS NULL", (user_id,)
+            ).fetchone()["n"]
+        enabled = row is not None and row["confirmed_at"] is not None
+        return {"enabled": enabled, "recovery_codes_left": left if enabled else 0}
+
+    def _reauth(self, auth: AuthContext, password: str, ctx: RequestContext, action: str) -> None:
+        """Re-check the password for a sensitive change, sharing the login lockout counters."""
+        now = self.now()
+        retry = self.limiter.retry_after(ratelimit.LOGIN_USER, auth.user.username, now)
+        if retry:
+            raise _rate_limited(retry)
+        with self.db.connect() as conn:
+            row = conn.execute("SELECT password_hash FROM users WHERE id = ?", (auth.user.id,)).fetchone()
+        ok = (
+            row is not None
+            and len(password) <= MAX_PASSWORD_CHARS
+            and len(password.encode("utf-8")) <= MAX_PASSWORD_BYTES
+            and self.hasher.verify(password, row["password_hash"])
+        )
+        if not ok:
+            self.limiter.record_failure(ratelimit.LOGIN_USER, auth.user.username, now)
+            audit.record(self.db, action=action, outcome="failure", actor_user_id=auth.user.id, ctx=ctx)
+            raise errors.AppError(errors.INVALID_CREDENTIALS, "Password is incorrect.", 401)
+
+    def mfa_begin(self, auth: AuthContext, password: str, ctx: RequestContext) -> dict[str, str]:
+        self._reauth(auth, password, ctx, "auth.mfa_begin")
+        if self._mfa_enabled(auth.user.id):
+            raise errors.AppError(errors.CONFLICT, "Two-factor authentication is already enabled.", 409)
+        secret = totp.new_secret()
+        sealed = totp.seal(self.settings.secret_bytes, secret)
+        with self.db.transaction() as conn:
+            conn.execute("DELETE FROM user_totp WHERE user_id = ?", (auth.user.id,))
+            conn.execute(
+                "INSERT INTO user_totp (user_id, secret_sealed, created_at) VALUES (?, ?, ?)",
+                (auth.user.id, sealed, to_iso(self.now())),
+            )
+            audit.record(
+                self.db,
+                action="auth.mfa_begin",
+                outcome="success",
+                actor_user_id=auth.user.id,
+                ctx=ctx,
+                conn=conn,
+            )
+        return {
+            "secret": totp.b32(secret),
+            "otpauth_uri": totp.otpauth_uri("OrbitNest", auth.user.username, secret),
+        }
+
+    def _load_secret(self, conn: sqlite3.Connection, user_id: str) -> tuple[bytes, int, bool] | None:
+        row = conn.execute(
+            "SELECT secret_sealed, last_step, confirmed_at FROM user_totp WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        secret = totp.unseal(self.settings.secret_bytes, row["secret_sealed"])
+        if secret is None:
+            return None
+        return secret, row["last_step"], row["confirmed_at"] is not None
+
+    def _consume_totp(self, conn: sqlite3.Connection, user_id: str, code: str) -> bool:
+        loaded = self._load_secret(conn, user_id)
+        if loaded is None:
+            return False
+        secret, last_step, _ = loaded
+        step = totp.verify(secret, code, self.now().timestamp(), last_step)
+        if step is None:
+            return False
+        # Compare-and-set: two concurrent requests with one code cannot both succeed.
+        cur = conn.execute(
+            "UPDATE user_totp SET last_step = ? WHERE user_id = ? AND last_step < ?", (step, user_id, step)
+        )
+        return cur.rowcount == 1
+
+    def _consume_second_factor(self, user_id: str, code: str) -> bool:
+        """Accept a current TOTP code or an unused recovery code; either is single use."""
+        with self.db.transaction() as conn:
+            if totp.normalize_code(code) is not None:
+                return self._consume_totp(conn, user_id, code)
+            digest = totp.hash_recovery(code)
+            if digest is None:
+                return False
+            rows = conn.execute(
+                "SELECT id, code_hash FROM recovery_codes WHERE user_id = ? AND used_at IS NULL", (user_id,)
+            ).fetchall()
+            hit = None
+            for r in rows:  # compare every row: no early exit on position
+                if hmac.compare_digest(r["code_hash"], digest) and hit is None:
+                    hit = r["id"]
+            if hit is None:
+                return False
+            cur = conn.execute(
+                "UPDATE recovery_codes SET used_at = ? WHERE id = ? AND used_at IS NULL",
+                (to_iso(self.now()), hit),
+            )
+            return cur.rowcount == 1
+
+    def mfa_confirm(self, auth: AuthContext, code: str, ctx: RequestContext) -> list[str]:
+        now = self.now()
+        retry = self.limiter.retry_after(ratelimit.LOGIN_USER, auth.user.username, now)
+        if retry:
+            raise _rate_limited(retry)
+        codes = totp.new_recovery_codes()
+        with self.db.transaction() as conn:
+            loaded = self._load_secret(conn, auth.user.id)
+            if loaded is None or loaded[2]:
+                raise errors.AppError(errors.CONFLICT, "Start enrolment first.", 409)
+            if not self._consume_totp(conn, auth.user.id, code):
+                ok = False
+            else:
+                ok = True
+                conn.execute(
+                    "UPDATE user_totp SET confirmed_at = ? WHERE user_id = ?", (to_iso(now), auth.user.id)
+                )
+                conn.execute("DELETE FROM recovery_codes WHERE user_id = ?", (auth.user.id,))
+                for c in codes:
+                    conn.execute(
+                        "INSERT INTO recovery_codes (user_id, code_hash) VALUES (?, ?)",
+                        (auth.user.id, totp.hash_recovery(c)),
+                    )
+                self._revoke_user_sessions(conn, auth.user.id, except_session=auth.session_id)
+        audit.record(
+            self.db,
+            action="auth.mfa_enable",
+            outcome="success" if ok else "failure",
+            actor_user_id=auth.user.id,
+            ctx=ctx,
+        )
+        if not ok:
+            self.limiter.record_failure(ratelimit.LOGIN_USER, auth.user.username, now)
+            raise errors.AppError(errors.INVALID_CREDENTIALS, "That code is not valid.", 401)
+        return codes
+
+    def mfa_disable(self, auth: AuthContext, password: str, code: str, ctx: RequestContext) -> None:
+        self._reauth(auth, password, ctx, "auth.mfa_disable")
+        if not self._mfa_enabled(auth.user.id):
+            raise errors.AppError(errors.CONFLICT, "Two-factor authentication is not enabled.", 409)
+        if not self._consume_second_factor(auth.user.id, code):
+            self.limiter.record_failure(ratelimit.LOGIN_USER, auth.user.username, self.now())
+            audit.record(
+                self.db, action="auth.mfa_disable", outcome="failure", actor_user_id=auth.user.id, ctx=ctx
+            )
+            raise errors.AppError(errors.INVALID_CREDENTIALS, "That code is not valid.", 401)
+        self._clear_mfa(auth.user.id)
+        audit.record(
+            self.db, action="auth.mfa_disable", outcome="success", actor_user_id=auth.user.id, ctx=ctx
+        )
+
+    def _clear_mfa(self, user_id: str) -> None:
+        with self.db.transaction() as conn:
+            conn.execute("DELETE FROM user_totp WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM recovery_codes WHERE user_id = ?", (user_id,))
+
+    def admin_reset_mfa(self, actor: User, target_id: str, ctx: RequestContext) -> None:
+        target = self.get_user(target_id)
+        if target is None:
+            raise errors.AppError(errors.NOT_FOUND, "User not found.", 404)
+        self._clear_mfa(target.id)
+        with self.db.transaction() as conn:
+            self._revoke_user_sessions(conn, target.id)
+        audit.record(
+            self.db,
+            action="auth.mfa_reset",
+            outcome="success",
+            actor_user_id=actor.id,
+            target_type="user",
+            target_id=target.id,
+            ctx=ctx,
+        )
+
+    def disable_mfa_local(self, username: str) -> None:
+        with self.db.connect() as conn:
+            row = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+        if row is None:
+            raise errors.AppError(errors.NOT_FOUND, "User not found.", 404)
+        self._clear_mfa(row["id"])
+        with self.db.transaction() as conn:
+            revoked = self._revoke_user_sessions(conn, row["id"])
+            audit.record(
+                self.db,
+                action="auth.mfa_reset",
+                outcome="success",
+                target_type="user",
+                target_id=row["id"],
+                details={"via": "cli", "sessions_revoked": revoked},
+                conn=conn,
+            )
 
     def logout(self, auth: AuthContext, ctx: RequestContext) -> None:
         self.revoke_session_by_id(auth.session_id)

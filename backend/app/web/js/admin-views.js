@@ -56,6 +56,10 @@ async function usersTab() {
               const r = await api("POST", `/users/${u.id}/password-reset`);
               await dialog({ title: "Reset token", body: `Give this one-time token to ${u.username}. It is shown only now and expires at ${fmtTime(r.expires_at)}.`, confirmText: "Done", fields: [{ name: "t", label: "Token", value: r.token }] });
             } catch (e) { toast(e.message, "error"); }
+          } }),
+          h("button", { text: "Reset 2FA", onclick: async () => {
+            if (!(await confirmAction({ title: "Reset two-step verification", body: `Remove ${u.username}'s authenticator and sign them out everywhere?`, danger: true }))) return;
+            if (await act("Reset failed", () => api("DELETE", `/users/${u.id}/mfa`))) toast("Two-step verification removed", "ok");
           } }))))))));
 }
 

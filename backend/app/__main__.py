@@ -122,6 +122,13 @@ def cmd_reset_password(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_disable_mfa(args: argparse.Namespace) -> int:
+    service, _ = _auth_service()
+    _run_auth(lambda: service.disable_mfa_local(args.username))
+    print(f"two-factor authentication removed for {args.username}; all of their sessions were revoked")
+    return 0
+
+
 def cmd_revoke_sessions(_: argparse.Namespace) -> int:
     service, _settings_unused = _auth_service()
     print(f"revoked {service.revoke_all_sessions()} session(s)")
@@ -234,6 +241,7 @@ COMMANDS = {
     "create-admin": cmd_create_admin,
     "reset-password": cmd_reset_password,
     "revoke-sessions": cmd_revoke_sessions,
+    "disable-mfa": cmd_disable_mfa,
 }
 
 
@@ -255,7 +263,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command != "build-images" and args.more:
         parser.error("unexpected extra arguments")
-    if args.command in {"create-admin", "reset-password"} and not args.username:
+    if args.command in {"create-admin", "reset-password", "disable-mfa"} and not args.username:
         parser.error(f"{args.command} requires a username")
     return COMMANDS[args.command](args)
 

@@ -69,6 +69,14 @@ Do not expose the plain-HTTP port. A non-loopback bind is refused unless
 
 See the warning at the top of `deploy/compose/docker-compose.yml`. It is untested.
 
+## Building browser and desktop images
+
+Streaming templates (Chromium, Firefox, Tor Browser, Ubuntu desktop) need locally built images:
+
+    python -m app build-images            # all, or name some: python -m app build-images stream-chromium
+
+Your user must be able to run `docker` (Linux: `sudo usermod -aG docker $USER`, then log in again). Reload the Templates page afterwards; no restart is needed. Expect 1-2 GB RAM per workspace. Lost authenticator: `python -m app disable-mfa <username>`.
+
 ## Operations
 
 ```bash

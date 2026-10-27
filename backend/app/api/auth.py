@@ -16,7 +16,15 @@ from app.auth.deps import (
 )
 from app.auth.service import AuthService
 from app.core.errors import parse_json_body
-from app.schemas.auth import ChangePasswordRequest, LoginRequest, ResetRedeemRequest, SetupRequest
+from app.schemas.auth import (
+    ChangePasswordRequest,
+    LoginRequest,
+    MfaBeginRequest,
+    MfaConfirmRequest,
+    MfaDisableRequest,
+    ResetRedeemRequest,
+    SetupRequest,
+)
 
 
 def _service(request: Request) -> AuthService:
@@ -62,7 +70,7 @@ async def login(request: Request) -> JSONResponse:
     service = _service(request)
     ctx = request_context(request)
     user, token, session_id = await run_in_threadpool(
-        lambda: service.login(username=data.username, password=data.password, ctx=ctx)
+        lambda: service.login(username=data.username, password=data.password, ctx=ctx, code=data.code)
     )
     response = JSONResponse(_session_payload(service, user, session_id))
     set_session_cookie(response, request, token)
@@ -117,6 +125,36 @@ async def reset_password(request: Request) -> Response:
     return Response(status_code=204)
 
 
+def mfa_status(request: Request) -> JSONResponse:
+    auth = authenticate(request)
+    return JSONResponse(_service(request).mfa_status(auth.user.id))
+
+
+async def mfa_begin(request: Request) -> JSONResponse:
+    auth = authenticate(request)
+    data = await parse_json_body(request, MfaBeginRequest)
+    result = await run_in_threadpool(
+        _service(request).mfa_begin, auth, data.password, request_context(request)
+    )
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+
+async def mfa_confirm(request: Request) -> JSONResponse:
+    auth = authenticate(request)
+    data = await parse_json_body(request, MfaConfirmRequest)
+    codes = await run_in_threadpool(_service(request).mfa_confirm, auth, data.code, request_context(request))
+    return JSONResponse({"recovery_codes": codes}, headers={"Cache-Control": "no-store"})
+
+
+async def mfa_disable(request: Request) -> Response:
+    auth = authenticate(request)
+    data = await parse_json_body(request, MfaDisableRequest)
+    await run_in_threadpool(
+        _service(request).mfa_disable, auth, data.password, data.code, request_context(request)
+    )
+    return Response(status_code=204)
+
+
 routes = [
     Route("/auth/setup-status", setup_status, methods=["GET"]),
     Route("/auth/setup", setup, methods=["POST"]),
@@ -127,6 +165,10 @@ routes = [
     Route("/auth/sessions", list_sessions, methods=["GET"]),
     Route("/auth/sessions/{session_id}", revoke_session, methods=["DELETE"]),
     Route("/auth/reset-password", reset_password, methods=["POST"]),
+    Route("/auth/mfa", mfa_status, methods=["GET"]),
+    Route("/auth/mfa/begin", mfa_begin, methods=["POST"]),
+    Route("/auth/mfa/confirm", mfa_confirm, methods=["POST"]),
+    Route("/auth/mfa/disable", mfa_disable, methods=["POST"]),
 ]
 
 # Routes reachable without a session. tests/test_route_guard.py fails if any other route answers

@@ -37,9 +37,15 @@
 | T14 | Insecure default config | Startup validation fails closed in production; no generated predictable secrets | Phase 1 |
 | T15 | Unauthenticated admin surface on a public interface | Refuse non-loopback bind without explicit opt-in and an env secret; route-guard test fails if any route is public without being allowlisted | Implemented and tested |
 | T16 | Resource exhaustion | Per-user quotas, request size limits, bounded buffers | Per-user workspace/running quotas, request and upload size limits, terminal limits (4 per workspace, 8 per user), idle/max terminal lifetime. Filesystem storage quota is reporting-only; a workload can still fill the disk (needs XFS project quotas or per-workspace filesystems) |
+| T18 | Stream gateway abuse (cross-user viewing, WS hijack, port exposure) | Cookie auth + Origin check, owner/admin with WORKSPACE_WRITE, VNC only on container loopback bridged via `docker exec` (no host port), asset allowlist from a root-owned path, 1 MiB frame cap, 2/workspace and 4/user limits, 8h cap, closed on workspace stop | Implemented; tested against fakes only |
+| T19 | Stolen or guessed password | Optional TOTP (single-use steps via compare-and-set, ±1 step), hashed single-use recovery codes, shared lockout counters, password re-entry to change 2FA, sessions revoked on admin/CLI reset, secret sealed at rest | Implemented and tested |
 | T17 | Termux/PRoot mistaken for a sandbox | UI and docs label it "no isolation"; no claim otherwise | Mitigated by labelling: capability report, API (`isolation: none`) and UI call local mode "no isolation"; local terminals are admin-only; docs/INSTALL.md repeats it |
 
 ## Residual risks (always listed)
+
+- TOTP secrets are sealed with a key derived from the server secret: protects a copied DB/backup, not an attacker who also has the secret.
+- A browser inside a container can reach whatever its network policy allows; Tor Browser in a container is not a substitute for Tails-grade anonymity.
+- Streaming and image builds have not been exercised on real Docker.
 
 - Login lockout is keyed on the attempted username, so an attacker can temporarily lock a known
   username (bounded to 15 minutes, per-IP limits also apply). Chosen over leaking which usernames exist.

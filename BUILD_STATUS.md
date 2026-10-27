@@ -132,8 +132,11 @@ login path (timing equalisation is coded, not measured).
 
 - The synchronous auth handlers run short SQLite queries on the event loop; password hashing is
   offloaded to a threadpool. Fine for the target scale, not load-tested.
-- No OIDC, no 2FA, no email-based reset.
-- Desktop streaming is reported as `not_implemented`, not faked. The browser terminal is reported available in Docker modes, admin-only/limited in Termux.
+- No OIDC, no email-based reset. Optional TOTP 2FA with recovery codes exists (no QR code: users paste the setup key).
+- Browser/desktop streaming (Chromium, Firefox, Tor Browser, Ubuntu desktop) is implemented as a VNC-over-`docker exec` gateway with a same-origin noVNC client. **Verified only against a stub RFB module and a fake runtime**: never run against a real Docker daemon, real VNC server, real noVNC, or a built image. The images must be built locally (`python -m app build-images`) and templates show "image not built" until then.
+- The Tor Browser image verifies the download signature and fails closed; the signing-key fingerprint in `docker/stream-tor/Dockerfile` was written from memory. Check it against support.torproject.org before trusting it.
+- Each browser/desktop workspace needs roughly 1-2 GB RAM (shared-memory size is set per template).
+- Terminal availability: reported available in Docker modes, admin-only/limited in Termux.
 - Terminals need the `websockets` package (in requirements.txt, never installed or run in the build sandbox).
 - Processes started by `docker exec` for a terminal may outlive an abruptly killed control plane; stopping the workspace ends them.
 - The file manager is POSIX only; on native Windows it is reported unsupported (run in WSL 2).
@@ -160,3 +163,8 @@ login path (timing equalisation is coded, not measured).
 - Packaging: `scripts/install-{linux.sh,termux.sh,windows.ps1}`, `deploy/{systemd,caddy,nginx,compose}`,
   `python -m app backup|restore` (tested: round trip, hostile archives, no overwrite), `docs/INSTALL.md`.
 - CI: `.github/workflows/ci.yml` (never run; written for GitHub Actions).
+
+## Update: streaming, Tor, UI, hardening
+
+- 412 Python tests, ruff clean, 9 node tests at last run. New: stream gateway, image build plan, backup/restore, TOTP (RFC 6238 vectors), MFA flows incl. replay/lockout/CSRF, regex-anchor regression (`\Z` instead of `$` across all validators).
+- An automated independent security review was attempted but aborted by an API rate limit; **no independent review has been done**. Treat the threat model as the author's own.

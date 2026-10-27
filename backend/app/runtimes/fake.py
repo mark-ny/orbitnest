@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import sys
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -142,6 +143,31 @@ class FakeRuntime(RuntimeAdapter):
         shell = FakeShell(cols, rows)
         self.shells.append(shell)
         return shell
+
+    images: set[str] | None = None  # None: every image counts as present
+
+    def has_image(self, image: str) -> bool | None:
+        return True if self.images is None else image in self.images
+
+    def stream_bridge_argv(self, resource_id: str, port: int) -> tuple[list[str], dict[str, str]]:
+        self._enter("stream_bridge", resource_id)
+        res = self._get(resource_id)
+        if res.state != "running":
+            raise RuntimeFailure("workspace is not running", operation="stream")
+        # A real subprocess that echoes every byte back, like a trivial VNC peer.
+        code = (
+            "import sys\nd=sys.stdin.buffer\no=sys.stdout.buffer\n"
+            "while True:\n c=d.read1(65536)\n if not c:break\n o.write(c);o.flush()"
+        )
+        return ([sys.executable, "-c", code], {})
+
+    def asset_argv(self, resource_id: str, path: str) -> tuple[list[str], dict[str, str]]:
+        self._enter("asset", resource_id)
+        res = self._get(resource_id)
+        if res.state != "running":
+            raise RuntimeFailure("workspace is not running", operation="stream")
+        code = "import sys;sys.stdout.buffer.write(b'// fake asset ' + sys.argv[1].encode())"
+        return ([sys.executable, "-c", code, path], {})
 
     def list_managed(self) -> dict[str, dict[str, str]]:
         self._enter("list_managed", "-")

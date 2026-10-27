@@ -118,6 +118,7 @@ class TemplateTests(unittest.TestCase):
             [
                 "browser-chromium",
                 "browser-firefox",
+                "browser-tor",
                 "desktop-ubuntu",
                 "desktop-kali",
                 "terminal-ubuntu",
@@ -231,12 +232,18 @@ class EvaluateTests(unittest.TestCase):
         self.assertTrue(evaluate(self.by_id["terminal-ubuntu"], c).creatable)
         self.assertTrue(evaluate(self.by_id["security-lab"], c).creatable)
 
-    def test_streaming_profiles_blocked_with_honest_reason(self) -> None:
+    def test_streaming_profiles_need_their_locally_built_image(self) -> None:
         c = caps({})
-        for tid in ("browser-chromium", "browser-firefox", "desktop-ubuntu"):
-            a = evaluate(self.by_id[tid], c)
-            self.assertFalse(a.creatable, tid)
-            self.assertIn("not implemented", a.reason)
+        for tid in ("browser-chromium", "browser-firefox", "browser-tor", "desktop-ubuntu"):
+            tpl = self.by_id[tid]
+            self.assertTrue(evaluate(tpl, c, image_present=lambda _t: True).creatable, tid)
+            self.assertTrue(evaluate(tpl, c).creatable, tid)  # unknown presence is not a blocker
+            missing = evaluate(tpl, c, image_present=lambda _t: False)
+            self.assertFalse(missing.creatable, tid)
+            self.assertIn("not been built", missing.reason)
+            self.assertIn("build-images", missing.remediation)
+        # Images that come from a registry are never gated on a local build.
+        self.assertTrue(evaluate(self.by_id["dev-python"], c, image_present=lambda _t: False).creatable)
 
     def test_disabled_builtin(self) -> None:
         a = evaluate(self.by_id["desktop-kali"], caps({}))

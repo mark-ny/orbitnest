@@ -1,7 +1,8 @@
 import { api, filesUrl } from "./api.js";
 import { canWrite, errorBox, loadCaps, modeBanner, navigate, page, poll, state } from "./core.js";
 import { Terminal } from "./terminal.js";
-import { add, ago, clear, confirmAction, dialog, fmtBytes, fmtTime, h, pill, toast } from "./ui.js";
+import { screenTab } from "./stream.js";
+import { add, ago, btn, busy, clear, confirmAction, dialog, fmtBytes, fmtTime, h, icon, pill, toast } from "./ui.js";
 
 const TRANSITIONAL = new Set(["provisioning", "starting", "stopping", "deleting"]);
 const PROFILE_HELP = { small: "0.5 CPU, 512 MB RAM", medium: "1 CPU, 1 GB RAM", large: "2 CPU, 2 GB RAM" };
@@ -11,38 +12,92 @@ const run = async (label, fn) => {
 };
 
 // ---------------------------------------------------------------------------------------------
+const TPL_ICON = { "browser-tor": ["onion", "tor"], browser: ["globe", "browser"], desktop: ["monitor", "desktop"], terminal: ["terminal", "terminal"], developer: ["code", "developer"], security: ["shield", "security"], custom: ["layers", ""] };
+export function tplIcon(t) {
+  const [name, cls] = TPL_ICON[t?.id] || TPL_ICON[t?.category] || ["layers", ""];
+  return h("span", { class: `tplicon ${cls}` }, icon(name));
+}
+
 export async function workspacesView() {
   const [caps, templates, list] = await Promise.all([
     loadCaps(true), api("GET", "/templates"), api("GET", "/workspaces", { query: { limit: 200 } }),
   ]);
+  const byId = Object.fromEntries(templates.items.map((t) => [t.id, t]));
+  let items = list.items;
+  let filter = "all";
+  let query = "";
   const grid = h("div", { class: "grid" });
-  const draw = (items) => {
+  const stats = h("div", { class: "stats" });
+  const create = h("button", { class: "primary", disabled: !canWrite(), onclick: () => createDialog(templates.items) }, icon("plus"), "New workspace");
+
+  const quick = (w, verb, ico, label) => h("button", { class: "ghost", title: label, "aria-label": `${label} ${w.name}`, disabled: !canWrite(), onclick: async (e) => {
+    await busy(e.currentTarget, () => run(`${label} failed`, () => api("POST", `/workspaces/${w.id}/${verb}`)));
+    refresh();
+  } }, icon(ico), label);
+
+  const draw = () => {
     clear(grid);
-    if (!items.length) grid.append(h("div", { class: "card muted", text: "No workspaces yet. Create one to get started." }));
-    for (const w of items) {
-      grid.append(h("article", { class: "card ws-card stack" },
-        h("div", { class: "row between" }, h("h3", {}, h("a", { href: `#/w/${w.id}`, text: w.name })), pill(w.status)),
-        h("dl", { class: "kv" },
-          h("dt", { text: "Template" }), h("dd", { text: w.template_id }),
-          h("dt", { text: "Resources" }), h("dd", { text: `${w.resource_profile} (${PROFILE_HELP[w.resource_profile] || ""})` }),
-          h("dt", { text: "Isolation" }), h("dd", { text: w.isolation === "container" ? "Container" : "None (local process)" }),
-          h("dt", { text: "Data" }), h("dd", { text: w.persistence })),
-        w.status_reason ? h("div", { class: "banner warn", text: w.status_reason }) : null,
-        h("div", { class: "row" }, h("a", { class: "btn", href: `#/w/${w.id}`, text: "Open" }))));
+    const visible = items.filter((w) => (filter === "all" || (filter === "running" ? ["running", "idle", "starting", "provisioning"].includes(w.status) : ["stopped", "failed"].includes(w.status)))
+      && (!query || `${w.name} ${w.template_id}`.toLowerCase().includes(query)));
+    if (!items.length) {
+      grid.append(h("div", { class: "card empty", style: null },
+        h("div", { class: "orbit-art", "aria-hidden": "true" }, h("i"), h("i"), h("b")),
+        h("h2", { text: "Launch your first workspace" }),
+        h("p", { class: "muted", text: "Pick a browser, a Linux desktop, Tor Browser or a developer environment. Each one runs in its own isolated container." }),
+        h("button", { class: "primary", onclick: () => createDialog(templates.items), disabled: !canWrite() }, icon("plus"), "New workspace")));
+    } else if (!visible.length) {
+      grid.append(h("div", { class: "card muted", text: "No workspaces match." }));
     }
+    for (const w of visible) {
+      const t = byId[w.template_id];
+      const live = ["running", "idle"].includes(w.status);
+      grid.append(h("article", { class: "card ws-card" },
+        h("div", { class: "row", style: null }, tplIcon(t), h("div", { class: "grow" }, h("h3", {}, h("a", { href: `#/w/${w.id}`, text: w.name })), h("div", { class: "muted", text: t?.name || w.template_id })), pill(w.status)),
+        h("div", { class: "chiprow" },
+          h("span", { class: `tag ${w.isolation === "container" ? "iso" : "noiso"}`, text: w.isolation === "container" ? "Container" : "No isolation" }),
+          h("span", { class: "tag", text: w.resource_profile }), h("span", { class: "tag", text: w.persistence })),
+        w.status_reason ? h("div", { class: "banner warn", text: w.status_reason }) : null,
+        h("div", { class: "row actions" },
+          live && t?.access === "stream" ? h("a", { class: "btn", href: `#/w/${w.id}/screen` }, icon("monitor"), "Open screen") : null,
+          live && t?.access !== "stream" ? h("a", { class: "btn", href: `#/w/${w.id}/terminal` }, icon("terminal"), "Terminal") : null,
+          ["stopped", "failed"].includes(w.status) ? quick(w, "start", "play", "Start") : null,
+          live ? quick(w, "stop", "stop", "Stop") : null)));
+    }
+    const running = items.filter((w) => ["running", "idle"].includes(w.status)).length;
+    clear(stats);
+    add(stats,
+      h("div", { class: "card stat" }, h("div", { class: "label", text: "Running" }), h("div", { class: "value", text: String(running) }), h("div", { class: "sub", text: "workspaces live now" })),
+      h("div", { class: "card stat" }, h("div", { class: "label", text: "Total" }), h("div", { class: "value", text: String(items.length) }), h("div", { class: "sub", text: "of your workspaces" })),
+      h("div", { class: "card stat" }, h("div", { class: "label", text: "Platform" }), h("div", { class: "value", style: null, text: caps.mode.replace(/-/g, " ") }), h("div", { class: "sub", text: caps.features?.container_workspaces?.state === "available" ? "container isolation active" : "limited, see notice" })));
   };
-  draw(list.items);
-  const create = h("button", { class: "primary", text: "New workspace", disabled: !canWrite(), onclick: () => createDialog(templates.items) });
-  page("workspaces", h("div", { class: "row between" }, h("h1", { text: "Workspaces" }), create), modeBanner(), grid);
-  poll(async () => draw((await api("GET", "/workspaces", { query: { limit: 200 } })).items), 4000);
-  void caps;
+  const refresh = async () => { items = (await api("GET", "/workspaces", { query: { limit: 200 } })).items; draw(); };
+
+  const chips = h("div", { class: "chips", role: "group", "aria-label": "Filter" }, ...[["all", "All"], ["running", "Running"], ["stopped", "Stopped"]].map(([k, label]) => {
+    const c = h("button", { class: "chip", type: "button", text: label, "aria-pressed": k === filter ? "true" : "false", onclick: () => { filter = k; for (const x of chips.children) x.setAttribute("aria-pressed", x === c ? "true" : "false"); draw(); } });
+    return c;
+  }));
+  const search = h("div", { class: "search" }, icon("search"), h("input", { type: "search", placeholder: "Search workspaces", "aria-label": "Search workspaces", oninput: (e) => { query = e.target.value.trim().toLowerCase(); draw(); } }));
+  draw();
+  page("workspaces", h("div", { class: "row between" }, h("div", {}, h("h1", { text: "Workspaces" }), h("p", { class: "muted", style: null, text: "Isolated environments that run on this host." })), create), modeBanner(), stats,
+    h("div", { class: "row between" }, search, chips), grid);
+  poll(refresh, 4000);
 }
 
 async function createDialog(templates) {
+  let chosen = templates.find((t) => t.availability.creatable)?.id || templates[0]?.id;
+  const cards = [];
+  const node = h("div", { class: "tplgrid", role: "radiogroup", "aria-label": "Template" }, templates.map((t) => {
+    const ok = t.availability.creatable;
+    const c = h("button", { type: "button", class: "tplcard", role: "radio", "aria-checked": String(t.id === chosen), "aria-disabled": String(!ok), title: ok ? "" : t.availability.reason || "Unavailable",
+      onclick: () => { if (!ok) { toast(t.availability.reason || "Unavailable", "error"); return; } chosen = t.id; for (const x of cards) x.setAttribute("aria-checked", String(x === c)); } },
+      tplIcon(t), h("span", {}, h("span", { class: "t", text: t.name }), h("span", { class: "d", text: ok ? t.description : `Unavailable: ${(t.availability.reason || "").slice(0, 90)}` })));
+    cards.push(c);
+    return c;
+  }));
   const v = await dialog({
-    title: "New workspace", confirmText: "Create",
+    title: "New workspace", confirmText: "Create", wide: true,
+    extra: { node, read: () => ({ template_id: chosen }) },
     fields: [
-      { name: "template_id", label: "Template", type: "select", options: templates.map((t) => ({ value: t.id, disabled: !t.availability.creatable, label: t.availability.creatable ? `${t.name}` : `${t.name} (unavailable: ${(t.availability.reason || "").slice(0, 60)})` })) },
       { name: "name", label: "Name", maxlength: 64, required: true, hint: "Letters, digits, spaces, . _ -" },
       { name: "profile", label: "Size", type: "select", value: "small", options: Object.entries(PROFILE_HELP).map(([k, d]) => ({ value: k, label: `${k} - ${d}` })) },
       { name: "persistence", label: "Data", type: "select", value: "", options: [{ value: "", label: "Template default" }, { value: "persistent", label: "Persistent (kept when deleted unless you choose otherwise)" }, { value: "disposable", label: "Disposable (erased on stop)" }] },
@@ -62,6 +117,8 @@ async function createDialog(templates) {
 // ---------------------------------------------------------------------------------------------
 export async function workspaceView(id, tab = "overview") {
   let ws = await api("GET", `/workspaces/${encodeURIComponent(id)}`);
+  const tpl = await api("GET", `/templates/${encodeURIComponent(ws.template_id)}`).catch(() => null);
+  const streamed = tpl?.access === "stream";
   const body = h("div", { class: "stack" });
   const head = h("div", { class: "stack" });
   let lastStatus = ws.status;
@@ -71,12 +128,13 @@ export async function workspaceView(id, tab = "overview") {
     const w = canWrite() && s !== "deleted";
     const act = (label, fn, cls = "", enabled = true) => h("button", { class: cls, text: label, disabled: !w || !enabled, onclick: fn });
     const call = (verb) => async () => { await run(`${verb} failed`, () => api("POST", `/workspaces/${id}/${verb}`)); refresh(); };
+    const act2 = (label, ico, fn, cls, enabled) => { const b = act(label, fn, cls, enabled); b.prepend(icon(ico)); return b; };
     return h("div", { class: "row" },
-      act("Start", call("start"), "primary", ["stopped", "failed"].includes(s)),
-      act("Stop", call("stop"), "", ["running", "idle", "starting", "failed"].includes(s)),
-      act("Restart", call("restart"), "", ["running", "idle"].includes(s)),
-      act("Reset", () => resetFlow(), "", ["stopped", "failed"].includes(s)),
-      act("Delete", () => deleteFlow(), "danger", !["deleting"].includes(s)));
+      act2("Start", "play", call("start"), "primary", ["stopped", "failed"].includes(s)),
+      act2("Stop", "stop", call("stop"), "", ["running", "idle", "starting", "failed"].includes(s)),
+      act2("Restart", "refresh", call("restart"), "", ["running", "idle"].includes(s)),
+      act2("Reset", "power", () => resetFlow(), "", ["stopped", "failed"].includes(s)),
+      act2("Delete", "trash", () => deleteFlow(), "danger", !["deleting"].includes(s)));
   };
 
   const resetFlow = async () => {
@@ -107,13 +165,13 @@ export async function workspaceView(id, tab = "overview") {
   };
 
   const tabs = () => h("nav", { class: "tabs", "aria-label": "Workspace sections" },
-    ...[["overview", "Overview"], ["files", "Files"], ["terminal", "Terminal"]].map(([k, label]) =>
-      h("a", { href: `#/w/${id}/${k === "overview" ? "" : k}`, text: label, "aria-current": tab === k ? "page" : null })));
+    ...[["overview", "Overview", "layers"], ...(streamed ? [["screen", "Screen", "monitor"]] : []), ["files", "Files", "folder"], ["terminal", "Terminal", "terminal"]].map(([k, label, ico]) =>
+      h("a", { href: `#/w/${id}/${k === "overview" ? "" : k}`, "aria-current": tab === k ? "page" : null }, icon(ico), label)));
 
   const drawHead = () => {
     clear(head);
     add(head,
-      h("div", { class: "row between" }, h("div", { class: "row" }, h("a", { href: "#/", text: "← Workspaces" }), h("h1", { text: ws.name }), pill(ws.status)), actions()),
+      h("div", { class: "row between" }, h("div", { class: "row" }, h("a", { class: "btn ghost", href: "#/", "aria-label": "Back to workspaces" }, icon("grid")), tplIcon(tpl), h("div", {}, h("h1", { text: ws.name }), h("div", { class: "muted", text: tpl?.name || ws.template_id })), pill(ws.status)), actions()),
       ws.status_reason ? h("div", { class: `banner ${ws.status === "failed" ? "danger" : "warn"}`, text: ws.status_reason }) : null,
       ws.isolation === "none" ? h("div", { class: "banner warn", text: "This workspace runs as a local process with no isolation." }) : null);
   };
@@ -122,7 +180,7 @@ export async function workspaceView(id, tab = "overview") {
     ws = await api("GET", `/workspaces/${encodeURIComponent(id)}`);
     drawHead();
     if (tab === "overview") await drawOverview(); // status-dependent panes re-render; files/terminal keep state
-    else if (lastStatus !== ws.status && tab === "terminal") terminalPane.statusChanged?.(ws);
+    else if (lastStatus !== ws.status && (tab === "terminal" || tab === "screen")) terminalPane.statusChanged?.(ws);
     lastStatus = ws.status;
   };
 
@@ -150,7 +208,8 @@ export async function workspaceView(id, tab = "overview") {
   const terminalPane = {};
   drawHead();
   page("workspaces", head, tabs(), body);
-  if (tab === "files") { body.append(filesPane(ws)); }
+  if (tab === "screen" && streamed) { body.append(screenTab(ws, terminalPane, tpl)); }
+  else if (tab === "files") { body.append(filesPane(ws)); }
   else if (tab === "terminal") { body.append(terminalTab(ws, terminalPane)); }
   else { body.append(overview); await drawOverview(); }
   poll(refresh, TRANSITIONAL.has(ws.status) ? 2000 : 6000);
@@ -173,15 +232,15 @@ function filesPane(ws) {
       ...parts.flatMap((p, i) => [h("button", { class: "link", text: p, onclick: () => load("/" + parts.slice(0, i + 1).join("/")) }), "/"]));
     const fileInput = h("input", { type: "file", multiple: true, hidden: true, onchange: () => upload([...fileInput.files]) });
     const toolbar = h("div", { class: "row" }, crumbs, h("div", { class: "grow" }),
-      h("button", { text: "New folder", disabled: !writable, onclick: mkdir }),
-      h("button", { class: "primary", text: "Upload", disabled: !writable, onclick: () => fileInput.click() }), fileInput);
+      h("button", { disabled: !writable, onclick: mkdir }, icon("folder"), "New folder"),
+      h("button", { class: "primary", disabled: !writable, onclick: () => fileInput.click() }, icon("upload"), "Upload"), fileInput);
     const rows = data.entries.map((e) => h("tr", {},
       h("td", {}, e.type === "dir" ? h("button", { class: "link", text: `${e.name}/`, onclick: () => load(join(e.name)) }) : h("span", { text: e.name }),
         e.type === "symlink" ? h("span", { class: "muted", text: " (symbolic link - not followed)" }) : null),
       h("td", { text: e.type === "file" ? fmtBytes(e.size) : "" }),
       h("td", { text: e.modified ? fmtTime(new Date(e.modified * 1000).toISOString()) : "" }),
       h("td", {}, h("div", { class: "file-actions row" },
-        e.type === "file" ? h("a", { class: "btn", href: filesUrl(ws.id, join(e.name)), download: e.name, text: "Download" }) : null,
+        e.type === "file" ? h("a", { class: "btn", href: filesUrl(ws.id, join(e.name)), download: e.name }, icon("download"), "Download") : null,
         h("button", { text: "Rename", disabled: !writable, onclick: () => rename(e) }),
         h("button", { class: "danger", text: "Delete", disabled: !writable, onclick: () => remove(e) })))));
     clear(box);

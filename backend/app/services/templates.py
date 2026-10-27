@@ -27,10 +27,10 @@ Category = Literal["browser", "desktop", "terminal", "developer", "security", "c
 Access = Literal["terminal", "stream", "none"]
 NetworkPolicy = Literal["none", "isolated-bridge"]
 
-TEMPLATE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,47}$")
+TEMPLATE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,47}\Z")
 # Registry/name[:tag][@sha256:digest]. Must not start with '-' (would be parsed as a CLI flag).
-IMAGE_RE = re.compile(r"^[a-z0-9][A-Za-z0-9._/:@-]{0,199}$")
-DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
+IMAGE_RE = re.compile(r"^[a-z0-9][A-Za-z0-9._/:@-]{0,199}\Z")
+DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}\Z")
 ALLOWED_CAPABILITIES = frozenset({"NET_BIND_SERVICE"})
 MAX_ARGV = 16
 MAX_ARG_LEN = 200
@@ -70,6 +70,12 @@ class Template(BaseModel):
     network_policy: NetworkPolicy = "isolated-bridge"
     allowed_networks: tuple[NetworkPolicy, ...] = ("isolated-bridge", "none")
     published_ports: tuple[int, ...] = ()
+    # Streamed templates: the VNC port INSIDE the container. It is never published to the host; the
+    # control plane bridges to it with `docker exec` (see app/services/streams.py).
+    stream_port: int | None = Field(default=None, ge=1, le=65535)
+    shm_mb: int = Field(default=64, ge=64, le=2048)
+    # Directory under docker/ that builds this template's image (locally built images only).
+    build_context: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,40}$")
     capabilities: tuple[str, ...] = ()
     data_mount: str = "/home/workspace"
     local_supported: bool = False
@@ -152,6 +158,10 @@ class Template(BaseModel):
             raise ValueError("a deprecated template needs a deprecation_note")
         if self.local_command and not self.local_supported:
             raise ValueError("local_command requires local_supported")
+        if self.access == "stream" and self.stream_port is None and self.enabled:
+            raise ValueError("a streamed template needs a stream_port")
+        if self.access != "stream" and self.stream_port is not None:
+            raise ValueError("stream_port is only valid for streamed templates")
         return self
 
     @property
@@ -176,33 +186,65 @@ BUILTIN_TEMPLATES: tuple[Template, ...] = (
         name="Browser: Chromium",
         description="Isolated Chromium browser session streamed to your browser.",
         category="browser",
-        image="lscr.io/linuxserver/chromium:latest",
+        image="orbitnest/stream-chromium:1",
+        build_context="stream-chromium",
         access="stream",
+        stream_port=5900,
+        shm_mb=512,
+        default_profile="medium",
         default_persistence="disposable",
         default_idle_minutes=30,
-        notes="Image tag is not pinned or verified. Pin a digest before enabling streaming.",
+        notes="Built locally from docker/stream-chromium (python -m app build-images).",
     ),
     _builtin(
         id="browser-firefox",
         name="Browser: Firefox",
         description="Isolated Firefox browser session streamed to your browser.",
         category="browser",
-        image="lscr.io/linuxserver/firefox:latest",
+        image="orbitnest/stream-firefox:1",
+        build_context="stream-firefox",
         access="stream",
+        stream_port=5900,
+        shm_mb=512,
+        default_profile="medium",
         default_persistence="disposable",
         default_idle_minutes=30,
-        notes="Image tag is not pinned or verified. Pin a digest before enabling streaming.",
+        notes="Built locally from docker/stream-firefox (python -m app build-images).",
+    ),
+    _builtin(
+        id="browser-tor",
+        name="Browser: Tor Browser",
+        description=(
+            "Official Tor Browser in an isolated container, streamed to your browser. "
+            "Its traffic goes through the Tor network."
+        ),
+        category="browser",
+        image="orbitnest/stream-tor:1",
+        build_context="stream-tor",
+        access="stream",
+        stream_port=5900,
+        shm_mb=512,
+        default_profile="medium",
+        default_persistence="disposable",
+        default_idle_minutes=30,
+        notes=(
+            "Built locally; the build downloads Tor Browser and verifies its signature. Only the browser "
+            "is anonymised: the workspace itself and anything you log in to are not."
+        ),
     ),
     _builtin(
         id="desktop-ubuntu",
         name="Linux Desktop: Ubuntu",
-        description="Ubuntu desktop session streamed to your browser.",
+        description="Ubuntu desktop (Xfce) session streamed to your browser.",
         category="desktop",
-        image="lscr.io/linuxserver/webtop:ubuntu-xfce",
+        image="orbitnest/stream-desktop-ubuntu:1",
+        build_context="stream-desktop-ubuntu",
         access="stream",
+        stream_port=5900,
+        shm_mb=512,
         default_profile="medium",
         default_idle_minutes=60,
-        notes="Image tag is not pinned or verified. Pin a digest before enabling streaming.",
+        notes="Built locally from docker/stream-desktop-ubuntu (python -m app build-images).",
     ),
     _builtin(
         id="desktop-kali",
@@ -337,6 +379,7 @@ def evaluate(
     caps: Capabilities,
     *,
     which: Callable[[str], str | None] = shutil.which,
+    image_present: Callable[[Template], bool | None] | None = None,
 ) -> Availability:
     """Decide availability from the matrix, the detected capabilities, and unbuilt-feature blockers."""
     if not template.enabled:
@@ -355,8 +398,6 @@ def evaluate(
     state = matrix.matrix_state(template.matrix_key, column)
     isolation = "container" if runtime == "docker" else "none"
     blocker = matrix.BLOCKED.get((template.matrix_key, column))
-    if template.access == "stream" and blocker is None and runtime == "docker":
-        blocker = "streaming"
     if blocker:
         return Availability(False, state, runtime, matrix.BLOCKERS[blocker], isolation=isolation)
     if state in {"remote", "unsupported"}:
@@ -368,6 +409,20 @@ def evaluate(
             if state == "remote"
             else "Not supported on this platform.",
             "Open a remote OrbitNest host in your browser, or run workspaces on a Linux host.",
+            isolation,
+        )
+    if (
+        runtime == "docker"
+        and template.build_context
+        and image_present is not None
+        and image_present(template) is False
+    ):
+        return Availability(
+            False,
+            state,
+            runtime,
+            "The container image for this template has not been built on this host yet.",
+            "Run: python -m app build-images " + template.build_context,
             isolation,
         )
     if runtime == "local":

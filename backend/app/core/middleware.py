@@ -21,13 +21,24 @@ from app.core.logging import request_id_var
 
 log = logging.getLogger("orbitnest.http")
 
-_REQUEST_ID_OK = re.compile(r"^[A-Za-z0-9._-]{8,64}$")
+_REQUEST_ID_OK = re.compile(r"^[A-Za-z0-9._-]{8,64}\Z")
 
 CSP = (
     "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
     "connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; "
     "form-action 'self'; frame-ancestors 'none'"
 )
+
+_HOST_OK = re.compile(r"^[A-Za-z0-9.\-]{1,253}(:[0-9]{1,5})?$|^\[[0-9A-Fa-f:.]{2,45}\](:[0-9]{1,5})?$")
+
+
+def csp_for(host: str | None, secure: bool) -> bytes:
+    """CSP with an explicit same-host WebSocket origin (older engines do not treat 'self' as ws:)."""
+    if not host or not _HOST_OK.match(host):
+        return CSP.encode("ascii")
+    scheme = "wss" if secure else "ws"
+    return CSP.replace("connect-src 'self'", f"connect-src 'self' {scheme}://{host}").encode("ascii")
+
 
 _STATIC_HEADERS: tuple[tuple[bytes, bytes], ...] = (
     (b"x-content-type-options", b"nosniff"),
@@ -85,6 +96,8 @@ class EdgeMiddleware:
                 present = {k.lower() for k, _ in headers}
                 headers.append((b"x-request-id", request_id.encode("ascii")))
                 for key, value in _STATIC_HEADERS:
+                    if key == b"content-security-policy":
+                        value = csp_for(_header(scope, b"host"), secure)
                     if key not in present:
                         headers.append((key, value))
                 if is_api and b"cache-control" not in present:

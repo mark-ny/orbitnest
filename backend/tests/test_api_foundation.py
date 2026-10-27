@@ -158,3 +158,13 @@ class SecurityMiddlewareTests(TempDirMixin, unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CspTests(unittest.TestCase):
+    def test_csp_names_the_validated_host_for_websockets(self) -> None:
+        from app.core.middleware import CSP, csp_for
+
+        self.assertIn("connect-src 'self' ws://localhost:8765", csp_for("localhost:8765", False).decode())
+        self.assertIn("wss://nest.example.com", csp_for("nest.example.com", True).decode())
+        for hostile in ("evil.com; script-src *", "a b", "x\r\nSet-Cookie: a=b", "", None, "h'ost"):
+            self.assertEqual(csp_for(hostile, False).decode(), CSP, repr(hostile))

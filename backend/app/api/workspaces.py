@@ -23,7 +23,7 @@ from app.schemas.workspaces import (
 )
 from app.services import audit
 from app.services import policy as policy_mod
-from app.services.templates import Template, TemplateError, evaluate
+from app.services.templates import Template, TemplateError
 from app.services.workspace_store import Workspace
 from app.services.workspaces import WorkspaceService
 
@@ -95,8 +95,7 @@ def _flag(request: Request, name: str) -> bool:
 
 
 def _template_json(request: Request, tpl: Template) -> dict[str, Any]:
-    caps = request.app.state.detect_capabilities()
-    avail = evaluate(tpl, caps)
+    avail = request.app.state.workspaces.availability(tpl)
     data = {k: getattr(tpl, k) for k in _TEMPLATE_PUBLIC}
     data["availability"] = avail.to_dict()
     return data

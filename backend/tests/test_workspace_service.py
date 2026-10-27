@@ -201,10 +201,12 @@ class ValidationTests(ServiceHarness):
     def test_unknown_template_and_unavailable(self) -> None:
         self.assertEqual(code_of(lambda: self.make_ws(template="nope"))[1], 404)
         self.assertEqual(code_of(lambda: self.make_ws(template="custom-ghost"))[1], 404)
-        # streaming profiles are blocked until streaming exists
+        # a streamed template whose image has not been built is unavailable, with a reason
+        self.fake.images = set()
         self.assertEqual(
             code_of(lambda: self.make_ws(template="desktop-ubuntu")), ("template_unavailable", 409)
         )
+        self.fake.images = None
         # Termux: container-only templates are unavailable and no docker adapter exists
         self.caps = make_caps({"TERMUX_VERSION": "1"}, docker=False, tmp=self.tmp)
         svc = self.new_service(runtimes={})

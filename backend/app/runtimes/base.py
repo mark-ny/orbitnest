@@ -17,7 +17,7 @@ from typing import Literal
 from app.runtimes.pty_shell import ShellSession
 from app.services.templates import ALLOWED_CAPABILITIES, IMAGE_RE
 
-WORKSPACE_ID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
+WORKSPACE_ID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}\Z")
 RuntimeStateName = Literal["created", "running", "exited", "missing", "unknown"]
 NETWORKS = frozenset({"none", "isolated-bridge"})
 
@@ -50,6 +50,8 @@ class RuntimeSpec:
     healthcheck: tuple[str, ...] | None = None
     local_command: tuple[str, ...] = ()
     max_file_mb: int = 2048
+    shm_mb: int = 64
+    stream_port: int | None = None
     labels: dict[str, str] = field(default_factory=dict)
 
     def validate(self) -> None:
@@ -76,6 +78,10 @@ class RuntimeSpec:
             raise RuntimeSpecError("process limit out of range")
         if not set(self.capabilities) <= ALLOWED_CAPABILITIES:
             raise RuntimeSpecError("capability not allowed")
+        if not 64 <= self.shm_mb <= 2048:
+            raise RuntimeSpecError("shared memory size out of range")
+        if self.stream_port is not None and not 1 <= self.stream_port <= 65535:
+            raise RuntimeSpecError("stream port out of range")
         mount = self.mount_path
         if (
             not mount.startswith("/")
@@ -137,6 +143,19 @@ class RuntimeAdapter(ABC):
     def open_shell(self, resource_id: str, cols: int, rows: int) -> ShellSession:
         """Open an interactive shell inside the workspace. Adapters without support raise."""
         raise RuntimeFailure("Terminals are not supported by this runtime.", operation="shell")
+
+    def has_image(self, image: str) -> bool | None:
+        """True/False if the image is present locally; None when this adapter cannot tell."""
+        return None
+
+    def stream_bridge_argv(self, resource_id: str, port: int) -> tuple[list[str], dict[str, str]]:
+        """Command (and environment) whose stdin/stdout is a byte pipe to ``127.0.0.1:port`` inside
+        the workspace. Nothing is published on the host."""
+        raise RuntimeFailure("Streaming is not supported by this runtime.", operation="stream")
+
+    def asset_argv(self, resource_id: str, path: str) -> tuple[list[str], dict[str, str]]:
+        """Command that writes one viewer asset (path already validated) to stdout."""
+        raise RuntimeFailure("Streaming is not supported by this runtime.", operation="stream")
 
     @abstractmethod
     def list_managed(self) -> dict[str, dict[str, str]]:

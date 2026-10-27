@@ -16,7 +16,7 @@ from pathlib import Path
 from app.db.database import Database
 
 MIGRATIONS_DIR = Path(__file__).parent / "sql"
-_FILENAME = re.compile(r"^(\d{4})_([a-z0-9_]+)\.sql$")
+_FILENAME = re.compile(r"^(\d{4})_([a-z0-9_]+)\.sql\Z")
 
 _BOOKKEEPING = """
 CREATE TABLE IF NOT EXISTS schema_migrations (

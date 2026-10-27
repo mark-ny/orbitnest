@@ -25,6 +25,20 @@ class SetupRequest(_Strict):
 class LoginRequest(_Strict):
     username: str = Field(min_length=1, max_length=64)
     password: str = _PW
+    code: str | None = Field(default=None, max_length=32)
+
+
+class MfaConfirmRequest(_Strict):
+    code: str = Field(min_length=1, max_length=32)
+
+
+class MfaBeginRequest(_Strict):
+    password: str = _PW
+
+
+class MfaDisableRequest(_Strict):
+    password: str = _PW
+    code: str = Field(min_length=1, max_length=32)
 
 
 class ChangePasswordRequest(_Strict):

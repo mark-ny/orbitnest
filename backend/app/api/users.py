@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from app.auth.deps import authenticate, request_context
@@ -80,9 +80,16 @@ def issue_password_reset(request: Request) -> JSONResponse:
     return JSONResponse({"token": token, "expires_at": expires_at}, status_code=201)
 
 
+def reset_mfa(request: Request) -> Response:
+    auth = authenticate(request, permission=Perm.USERS_MANAGE)
+    _service(request).admin_reset_mfa(auth.user, request.path_params["user_id"], request_context(request))
+    return Response(status_code=204)
+
+
 routes = [
     Route("/users", list_users, methods=["GET"]),
     Route("/users", create_user, methods=["POST"]),
     Route("/users/{user_id}", update_user, methods=["PATCH"]),
     Route("/users/{user_id}/password-reset", issue_password_reset, methods=["POST"]),
+    Route("/users/{user_id}/mfa", reset_mfa, methods=["DELETE"]),
 ]

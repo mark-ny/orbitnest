@@ -13,7 +13,14 @@ from urllib.parse import parse_qsl, urlencode
 
 
 class WsConn:
-    def __init__(self, app: Any, path: str, headers: dict[str, str], client: tuple[str, int]) -> None:
+    def __init__(
+        self,
+        app: Any,
+        path: str,
+        headers: dict[str, str],
+        client: tuple[str, int],
+        subprotocols: list[str] | None = None,
+    ) -> None:
         path, _, query = path.partition("?")
         hdrs = {k.lower(): v for k, v in headers.items()}
         hdrs.setdefault("host", "localhost")
@@ -28,7 +35,7 @@ class WsConn:
             "headers": [(k.encode(), v.encode()) for k, v in hdrs.items()],
             "client": client,
             "server": ("testserver", 80),
-            "subprotocols": [],
+            "subprotocols": list(subprotocols or []),
             "root_path": "",
         }
         self.app = app
@@ -100,8 +107,9 @@ def connect(
     cookies: dict[str, str] | None = None,
     headers: dict[str, str] | None = None,
     client: tuple[str, int] = ("127.0.0.1", 50000),
+    subprotocols: list[str] | None = None,
 ) -> WsConn:
     hdrs = dict(headers or {})
     if cookies:
         hdrs["cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
-    return WsConn(app, path, hdrs, client)
+    return WsConn(app, path, hdrs, client, subprotocols)

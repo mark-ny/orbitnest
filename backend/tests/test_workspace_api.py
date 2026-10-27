@@ -168,9 +168,10 @@ class WorkspaceApiTests(ApiBase):
 class TemplateAndPolicyApiTests(ApiBase):
     def test_template_list_reports_availability(self) -> None:
         items = {t["id"]: t for t in self.alice.get("/api/v1/templates").json()["items"]}
-        self.assertEqual(len(items), 9)
+        self.assertEqual(len(items), 10)
         self.assertTrue(items["dev-python"]["availability"]["creatable"])
-        blocked = items["desktop-ubuntu"]["availability"]
+        self.assertTrue(items["browser-tor"]["availability"]["creatable"])
+        blocked = items["desktop-kali"]["availability"]
         self.assertFalse(blocked["creatable"])
         self.assertTrue(blocked["reason"])
         self.assertNotIn("image", items["dev-python"])  # image/command internals are not exposed

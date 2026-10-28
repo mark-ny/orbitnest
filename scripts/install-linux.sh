@@ -69,15 +69,20 @@ for name, f in c.get("features", {}).items():
     print("  " + name + ": " + str(f.get("state")) + " - " + str(f.get("reason") or ""))
 ' || true
 
+# One-word launcher: orbitnest start | stop | status | update
+BIN_DIR="$HOME/.local/bin"
+mkdir -p "$BIN_DIR"
+ln -sf "$REPO_DIR/scripts/orbitnest" "$BIN_DIR/orbitnest"
+case ":$PATH:" in *":$BIN_DIR:"*) ;; *) say "Add $BIN_DIR to your PATH (echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc, then reopen the terminal).";; esac
+
 cat <<NEXT
 
 Next steps:
-  1. Create the first administrator (prompts for a password):
-       set -a; . "$ENV_FILE"; set +a; cd "$REPO_DIR/backend"
-       "$VENV/bin/python" -m app create-admin <username>
-  2. Start the server:
-       "$VENV/bin/python" -m app serve        # http://127.0.0.1:8765
-     or run it as a service: see deploy/systemd/orbitnest.service
-  3. For access from other machines, put a TLS reverse proxy in front (deploy/caddy, deploy/nginx).
-     Never expose the plain HTTP port to the internet.
+  1. Create the first administrator (prompts for a password):   orbitnest create-admin <username>
+  2. Start the server:                                          orbitnest start
+  3. Open http://127.0.0.1:8765
+  Later, to get new versions from GitHub:                       orbitnest update
+  Other commands: orbitnest stop | restart | status | logs
+For access from other machines, put a TLS reverse proxy in front (deploy/caddy, deploy/nginx).
+Never expose the plain HTTP port to the internet.
 NEXT

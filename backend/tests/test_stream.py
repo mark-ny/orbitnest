@@ -56,6 +56,12 @@ class AssetTests(StreamBase):
             self.assertEqual(self.alice.get(f"{self.base}/assets/core/rfb.js").status, 200)
         self.assertEqual(len(self.fake.ops("asset")), 1)
 
+    def test_large_asset_is_not_truncated(self) -> None:
+        r = self.alice.get(f"{self.base}/assets/core/big.js")
+        self.assertEqual(r.status, 200)
+        self.assertEqual(len(r.text), 300005)
+        self.assertTrue(r.text.endswith("//END"))
+
     def test_missing_zstream_is_supplied_but_other_missing_files_stay_404(self) -> None:
         zs = "vendor/pako/lib/zlib/zstream.js"
         self.fake.missing_assets = {zs, "core/gone.js"}

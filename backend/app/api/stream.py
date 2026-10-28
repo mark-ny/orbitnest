@@ -31,6 +31,20 @@ READ_CHUNK = 64 * 1024
 ASSET_TIMEOUT = 15.0
 
 
+async def _read_all(stream: asyncio.StreamReader, limit: int) -> bytes:
+    """Read until EOF or ``limit`` bytes. ``StreamReader.read(n)`` returns after ANY data arrives, so a
+    single call truncates files larger than one pipe chunk."""
+    parts: list[bytes] = []
+    total = 0
+    while total < limit:
+        chunk = await stream.read(min(READ_CHUNK, limit - total))
+        if not chunk:
+            break
+        parts.append(chunk)
+        total += len(chunk)
+    return b"".join(parts)
+
+
 async def _run_asset(argv: list[str], env: dict[str, str]) -> bytes:
     proc = await asyncio.create_subprocess_exec(
         *argv,
@@ -41,7 +55,7 @@ async def _run_asset(argv: list[str], env: dict[str, str]) -> bytes:
     )
     try:
         assert proc.stdout is not None
-        data = await asyncio.wait_for(proc.stdout.read(MAX_ASSET_BYTES + 1), ASSET_TIMEOUT)
+        data = await asyncio.wait_for(_read_all(proc.stdout, MAX_ASSET_BYTES + 1), ASSET_TIMEOUT)
         code = await asyncio.wait_for(proc.wait(), ASSET_TIMEOUT)
     except TimeoutError:
         proc.kill()

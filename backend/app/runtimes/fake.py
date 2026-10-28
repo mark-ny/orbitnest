@@ -168,6 +168,9 @@ class FakeRuntime(RuntimeAdapter):
             raise RuntimeFailure("workspace is not running", operation="stream")
         if path in getattr(self, "missing_assets", ()):
             return ([sys.executable, "-c", "import sys;sys.exit(1)"], {})  # like `cat` on a missing file
+        if path.endswith("/big.js"):  # larger than any pipe chunk; ends with a marker to detect truncation
+            code = "import sys;sys.stdout.buffer.write(b'x' * 300000 + b'//END')"
+            return ([sys.executable, "-c", code], {})
         code = "import sys;sys.stdout.buffer.write(b'// fake asset ' + sys.argv[1].encode())"
         return ([sys.executable, "-c", code, path], {})
 

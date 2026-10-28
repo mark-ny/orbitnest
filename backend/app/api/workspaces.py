@@ -23,7 +23,13 @@ from app.schemas.workspaces import (
 )
 from app.services import audit
 from app.services import policy as policy_mod
-from app.services.templates import Template, TemplateError
+from app.services.templates import (
+    CAPABILITY_HELP,
+    LAB_RULES,
+    LAB_RULES_VERSION,
+    Template,
+    TemplateError,
+)
 from app.services.workspace_store import Workspace
 from app.services.workspaces import WorkspaceService
 
@@ -31,7 +37,8 @@ _TEMPLATE_PUBLIC = (
     "id", "name", "description", "category", "access", "default_profile", "max_profile",
     "default_persistence", "default_idle_minutes", "network_policy", "allowed_networks",
     "authorized_use_only", "deprecated", "deprecation_note", "update_policy", "enabled",
-    "disabled_reason", "notes", "builtin", "local_supported",
+    "disabled_reason", "notes", "builtin", "local_supported", "optional_capabilities", "privacy",
+    "recommended_profile", "min_profile",
 )  # fmt: skip
 
 
@@ -61,6 +68,7 @@ def workspace_json(ws: Workspace, *, include_owner: bool = False) -> dict[str, A
         "idle_timeout_minutes": ws.idle_timeout_minutes,
         "network_policy": ws.network_policy,
         "labels": ws.labels,
+        "capabilities": list(ws.extra_caps),
         "data": ws.volume_state,
         "created_at": ws.created_at,
         "updated_at": ws.updated_at,
@@ -98,6 +106,11 @@ def _template_json(request: Request, tpl: Template) -> dict[str, Any]:
     avail = request.app.state.workspaces.availability(tpl)
     data = {k: getattr(tpl, k) for k in _TEMPLATE_PUBLIC}
     data["availability"] = avail.to_dict()
+    data["buildable"] = bool(tpl.build_context)
+    if tpl.authorized_use_only:
+        data["rules"] = list(LAB_RULES)
+        data["rules_version"] = LAB_RULES_VERSION
+        data["capability_help"] = {c: CAPABILITY_HELP[c] for c in tpl.optional_capabilities}
     return data
 
 
@@ -115,6 +128,54 @@ async def get_template(request: Request) -> JSONResponse:
     if tpl is None:
         raise errors.AppError(errors.NOT_FOUND, "Template not found.", 404)
     return JSONResponse(await run_in_threadpool(_template_json, request, tpl))
+
+
+def _buildable_template(request: Request) -> Template:
+    tpl = request.app.state.templates.get(request.path_params["template_id"])
+    if tpl is None or not tpl.build_context:
+        raise errors.AppError(errors.NOT_FOUND, "This template has no buildable image.", 404)
+    return tpl
+
+
+async def start_image_build(request: Request) -> JSONResponse:
+    auth = authenticate(request, permission=Perm.TEMPLATES_MANAGE)
+    tpl = _buildable_template(request)
+    assert tpl.build_context is not None
+    state = await run_in_threadpool(request.app.state.image_builder.start, tpl.build_context)
+    audit.record(
+        request.app.state.db,
+        action="image.build",
+        outcome="success",
+        actor_user_id=auth.user.id,
+        target_type="template",
+        target_id=tpl.id,
+        ctx=request_context(request),
+    )
+    return JSONResponse(state, status_code=202)
+
+
+async def image_build_status(request: Request) -> JSONResponse:
+    authenticate(request, permission=Perm.TEMPLATES_MANAGE)
+    tpl = _buildable_template(request)
+    state = request.app.state.image_builder.status(tpl.build_context)
+    return JSONResponse(state or {"state": "idle", "context": tpl.build_context, "log": []})
+
+
+async def cancel_image_build(request: Request) -> Response:
+    auth = authenticate(request, permission=Perm.TEMPLATES_MANAGE)
+    tpl = _buildable_template(request)
+    if not request.app.state.image_builder.cancel(tpl.build_context):
+        raise errors.AppError(errors.CONFLICT, "No build is running for this template.", 409)
+    audit.record(
+        request.app.state.db,
+        action="image.build_cancel",
+        outcome="success",
+        actor_user_id=auth.user.id,
+        target_type="template",
+        target_id=tpl.id,
+        ctx=request_context(request),
+    )
+    return Response(status_code=204)
 
 
 async def create_template(request: Request) -> JSONResponse:
@@ -324,6 +385,9 @@ async def update_policy(request: Request) -> JSONResponse:
 routes = [
     Route("/templates", list_templates, methods=["GET"]),
     Route("/templates", create_template, methods=["POST"]),
+    Route("/templates/{template_id}/build", start_image_build, methods=["POST"]),
+    Route("/templates/{template_id}/build", image_build_status, methods=["GET"]),
+    Route("/templates/{template_id}/build", cancel_image_build, methods=["DELETE"]),
     Route("/templates/{template_id}", get_template, methods=["GET"]),
     Route("/templates/{template_id}", update_template, methods=["PATCH"]),
     Route("/templates/{template_id}", delete_template, methods=["DELETE"]),

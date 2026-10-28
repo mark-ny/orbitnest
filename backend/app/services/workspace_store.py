@@ -43,6 +43,7 @@ class Workspace:
     idle_timeout_minutes: int | None
     network_policy: str
     labels: dict[str, str]
+    extra_caps: tuple[str, ...]
     created_at: str
     updated_at: str
     started_at: str | None
@@ -76,6 +77,7 @@ class Workspace:
             idle_timeout_minutes=row["idle_timeout_minutes"],
             network_policy=row["network_policy"],
             labels=json.loads(row["labels"] or "{}"),
+            extra_caps=tuple(json.loads(row["extra_caps"] or "[]")) if "extra_caps" in keys else (),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             started_at=row["started_at"],
@@ -372,6 +374,7 @@ class WorkspaceStore:
                 raise QuotaExceeded("running", max_running)
             cols = {**values, "created_at": now, "updated_at": now}
             cols["labels"] = json.dumps(cols.get("labels", {}), separators=(",", ":"))
+            cols["extra_caps"] = json.dumps(list(cols.get("extra_caps", ())), separators=(",", ":"))
             c.execute(
                 f"INSERT INTO workspaces ({', '.join(cols)}) VALUES ({', '.join('?' for _ in cols)})",  # noqa: S608
                 list(cols.values()),

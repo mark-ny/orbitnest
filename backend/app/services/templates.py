@@ -31,7 +31,28 @@ TEMPLATE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,47}\Z")
 # Registry/name[:tag][@sha256:digest]. Must not start with '-' (would be parsed as a CLI flag).
 IMAGE_RE = re.compile(r"^[a-z0-9][A-Za-z0-9._/:@-]{0,199}\Z")
 DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}\Z")
-ALLOWED_CAPABILITIES = frozenset({"NET_BIND_SERVICE"})
+# Linux capabilities a container may ever be given. Deliberately NOT included: SYS_ADMIN, SYS_MODULE,
+# SYS_RAWIO, DAC_OVERRIDE, privileged mode, host networking, device passthrough and the Docker socket:
+# any of those would let a workload reach the host, which defeats the point of a container.
+ALLOWED_CAPABILITIES = frozenset({"NET_BIND_SERVICE", "NET_RAW", "NET_ADMIN", "SYS_PTRACE"})
+# What custom (admin-defined) templates may request. The lab capabilities are built-in only.
+CUSTOM_ALLOWED_CAPABILITIES = frozenset({"NET_BIND_SERVICE"})
+CAPABILITY_HELP = {
+    "NET_RAW": "Raw sockets: ping, nmap SYN/ICMP scans, packet capture (tcpdump, wireshark).",
+    "NET_ADMIN": "Network setup inside the lab's own network namespace (interfaces, routes, iptables).",
+    "SYS_PTRACE": "Attach debuggers and tracers (gdb, strace, ltrace) to processes in the lab.",
+}
+LAB_RULES_VERSION = "2026-10-28"
+LAB_RULES: tuple[str, ...] = (
+    "I will only test systems that I own, or that I have clear, written permission to test.",
+    "I will not attack, scan or disrupt third parties, shared infrastructure or other OrbitNest users.",
+    "I will not use this lab to access, damage or take other people's data, and I will follow the "
+    "laws that apply to me.",
+    "I understand that this lab's creation, the capabilities I choose and my agreement to these "
+    "rules are logged.",
+    "I understand an administrator may stop or remove lab workspaces that break these rules, and "
+    "that I am responsible for what I do with them.",
+)
 MAX_ARGV = 16
 MAX_ARG_LEN = 200
 
@@ -77,6 +98,17 @@ class Template(BaseModel):
     # Directory under docker/ that builds this template's image (locally built images only).
     build_context: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,40}$")
     capabilities: tuple[str, ...] = ()
+    # Extra capabilities a user may switch on per workspace, only after accepting the lab rules.
+    optional_capabilities: tuple[str, ...] = ()
+    # Run as root INSIDE the (still unprivileged, capability-limited) container. Lab templates only:
+    # raw-socket tools need root, and file capabilities do not work under no-new-privileges.
+    run_as_root: bool = False
+    # "direct": traffic leaves from the host's real IP/ISP. "tor": routed through Tor. "n/a": no browsing.
+    privacy: Literal["direct", "tor", "n/a"] = "n/a"
+    # Profile at which this template runs comfortably; the UI warns below it.
+    recommended_profile: str | None = None
+    # Smallest profile that works at all (browsers need more than 512 MB); smaller ones are refused.
+    min_profile: str | None = None
     data_mount: str = "/home/workspace"
     local_supported: bool = False
     required_local_tools: tuple[str, ...] = ()
@@ -129,6 +161,14 @@ class Template(BaseModel):
             raise ValueError(f"capability not allowed: {bad[0]}")
         return v
 
+    @field_validator("optional_capabilities")
+    @classmethod
+    def _optcaps(cls, v: tuple[str, ...]) -> tuple[str, ...]:
+        bad = [c for c in v if c not in ALLOWED_CAPABILITIES]
+        if bad:
+            raise ValueError(f"capability not allowed: {bad[0]}")
+        return v
+
     @field_validator("published_ports")
     @classmethod
     def _ports(cls, v: tuple[int, ...]) -> tuple[int, ...]:
@@ -158,6 +198,15 @@ class Template(BaseModel):
             raise ValueError("a deprecated template needs a deprecation_note")
         if self.local_command and not self.local_supported:
             raise ValueError("local_command requires local_supported")
+        if self.run_as_root and not self.authorized_use_only:
+            raise ValueError("run_as_root requires authorized_use_only")
+        if self.optional_capabilities and not self.authorized_use_only:
+            raise ValueError("optional capabilities require authorized_use_only")
+        for pname in (self.recommended_profile, self.min_profile):
+            if pname is not None and pname not in PROFILE_ORDER:
+                raise ValueError("unknown profile name")
+        if self.min_profile and PROFILE_ORDER.index(self.min_profile) > PROFILE_ORDER.index(self.max_profile):
+            raise ValueError("min_profile exceeds max_profile")
         if self.access == "stream" and self.stream_port is None and self.enabled:
             raise ValueError("a streamed template needs a stream_port")
         if self.access != "stream" and self.stream_port is not None:
@@ -191,7 +240,10 @@ BUILTIN_TEMPLATES: tuple[Template, ...] = (
         access="stream",
         stream_port=5900,
         shm_mb=512,
-        default_profile="medium",
+        default_profile="large",
+        recommended_profile="large",
+        min_profile="medium",
+        privacy="direct",
         default_persistence="disposable",
         default_idle_minutes=30,
         notes="Built locally from docker/stream-chromium (python -m app build-images).",
@@ -206,7 +258,10 @@ BUILTIN_TEMPLATES: tuple[Template, ...] = (
         access="stream",
         stream_port=5900,
         shm_mb=512,
-        default_profile="medium",
+        default_profile="large",
+        recommended_profile="large",
+        min_profile="medium",
+        privacy="direct",
         default_persistence="disposable",
         default_idle_minutes=30,
         notes="Built locally from docker/stream-firefox (python -m app build-images).",
@@ -215,8 +270,8 @@ BUILTIN_TEMPLATES: tuple[Template, ...] = (
         id="browser-tor",
         name="Browser: Tor Browser",
         description=(
-            "Official Tor Browser in an isolated container, streamed to your browser. "
-            "Its traffic goes through the Tor network."
+            "Official Tor Browser in an isolated container, streamed to your browser. Its web traffic "
+            "goes through the Tor network, so sites see a Tor exit instead of your IP address."
         ),
         category="browser",
         image="orbitnest/stream-tor:1",
@@ -224,12 +279,17 @@ BUILTIN_TEMPLATES: tuple[Template, ...] = (
         access="stream",
         stream_port=5900,
         shm_mb=512,
-        default_profile="medium",
+        default_profile="large",
+        recommended_profile="large",
+        min_profile="medium",
+        privacy="tor",
         default_persistence="disposable",
         default_idle_minutes=30,
         notes=(
-            "Built locally; the build downloads Tor Browser and verifies its signature. Only the browser "
-            "is anonymised: the workspace itself and anything you log in to are not."
+            "Disposable by default: everything is erased when the workspace stops. This is Tor Browser in "
+            "a container, NOT Tails: only the browser's traffic uses Tor, your ISP can see that you use "
+            "Tor (use bridges in Tor's connection settings to hide that), and accounts you log in to "
+            "identify you."
         ),
     ),
     _builtin(
@@ -242,21 +302,37 @@ BUILTIN_TEMPLATES: tuple[Template, ...] = (
         access="stream",
         stream_port=5900,
         shm_mb=512,
-        default_profile="medium",
+        default_profile="large",
+        recommended_profile="large",
+        min_profile="medium",
+        privacy="direct",
         default_idle_minutes=60,
         notes="Built locally from docker/stream-desktop-ubuntu (python -m app build-images).",
     ),
     _builtin(
         id="desktop-kali",
-        name="Linux Desktop: Kali",
-        description="Kali desktop for authorized security work.",
+        name="Security Lab Desktop: Kali",
+        description=(
+            "Kali Linux desktop with the common security tools, streamed to your browser. "
+            "For AUTHORIZED testing only; you must accept the lab rules."
+        ),
         category="desktop",
-        image="kalilinux/kali-rolling",
+        image="orbitnest/stream-kali:1",
+        build_context="stream-kali",
         access="stream",
-        default_profile="medium",
+        stream_port=5900,
+        shm_mb=512,
+        default_profile="large",
+        recommended_profile="large",
+        min_profile="medium",
+        privacy="direct",
         authorized_use_only=True,
-        enabled=False,
-        disabled_reason="No verified, maintained Kali desktop image is configured.",
+        optional_capabilities=("NET_RAW", "NET_ADMIN", "SYS_PTRACE"),
+        run_as_root=True,
+        notes=(
+            "Built locally (several GB). Rolling base image, so rebuilds differ. Runs unprivileged, on an "
+            "isolated network, with only the capabilities you tick."
+        ),
     ),
     _builtin(
         id="terminal-ubuntu",
@@ -304,16 +380,24 @@ BUILTIN_TEMPLATES: tuple[Template, ...] = (
         id="security-lab",
         name="Security Lab",
         description=(
-            "Non-privileged lab for AUTHORIZED security testing only. No host networking and no "
-            "extra Linux capabilities (raw-socket tools such as SYN scans will not work)."
+            "Kali Linux command-line lab with the common security tools, for AUTHORIZED testing only. "
+            "You must accept the lab rules, and may switch on extra Linux capabilities."
         ),
         category="security",
-        image="kalilinux/kali-rolling",
+        image="orbitnest/security-lab:1",
+        build_context="security-lab",
         command=_IDLE,
         default_profile="medium",
+        recommended_profile="medium",
+        privacy="direct",
         default_idle_minutes=60,
         authorized_use_only=True,
-        notes="Rolling image: not reproducible. Use only against systems you are authorized to test.",
+        optional_capabilities=("NET_RAW", "NET_ADMIN", "SYS_PTRACE"),
+        run_as_root=True,
+        notes=(
+            "Built locally (several GB). Without extra capabilities, raw-socket tools (SYN scans, ping, "
+            "packet capture) will not work. It never runs privileged or on the host network."
+        ),
     ),
 )
 
@@ -335,6 +419,14 @@ def validate_custom_definition(payload: dict[str, Any]) -> Template:
     data.setdefault("local_supported", False)
     if data.get("local_supported") or data.get("local_command"):
         raise TemplateError("custom templates cannot run as local processes")
+    if set(data.get("capabilities") or ()) - CUSTOM_ALLOWED_CAPABILITIES:
+        raise TemplateError("custom templates may only use the NET_BIND_SERVICE capability")
+    if data.get("run_as_root"):
+        raise TemplateError("only built-in lab templates may run as root inside the container")
+    if data.get("optional_capabilities"):
+        raise TemplateError("optional capabilities are only available on built-in lab templates")
+    if data.get("privacy") == "tor":
+        raise TemplateError("only the built-in Tor template can claim Tor routing")
     try:
         return Template.model_validate(data)
     except ValidationError as exc:

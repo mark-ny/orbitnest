@@ -102,6 +102,9 @@ export function dialog({ title, body, fields = [], confirmText = "OK", danger = 
     dlg.addEventListener("cancel", (e) => { e.preventDefault(); done(null); });
     form.addEventListener("submit", (e) => {
       e.preventDefault();
+      const problem = extra?.validate?.();
+      if (problem) { err.textContent = problem; return; }
+      err.textContent = "";
       const out = {};
       for (const f of fields) out[f.name] = f.type === "checkbox" ? inputs[f.name].checked : inputs[f.name].value;
       if (extra) Object.assign(out, extra.read());

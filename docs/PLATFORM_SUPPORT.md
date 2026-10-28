@@ -34,12 +34,12 @@ dashboard disables creation and says why.
 | `browser-firefox` | Full | Full | Remote host required | Full |  |
 | `browser-tor` | Full | Full | Remote host required | Full | x86_64 only; needs outbound access. The build downloads and verifies Tor Browser. |
 | `desktop-ubuntu` | Full | Full | Remote host required | Full |  |
-| `desktop-kali` | Limited | Limited | Remote host required | Limited | No verified maintained image is configured; disabled. Authorized security work only. |
+| `desktop-kali` | Limited | Limited | Remote host required | Limited | Built locally from rolling Kali (several GB). Authorized use only; rules must be accepted. |
 | `terminal-ubuntu` | Full | Full | Limited (blocked: proot) | Full | Termux: would use proot-distro (no isolation). |
 | `dev-python` | Full | Full | Limited | Full | Termux: local folder and local toolchain, no isolation. |
 | `dev-node` | Full | Full | Limited | Full | Termux: local folder and local toolchain, no isolation. |
 | `dev-web` | Full | Full | Limited | Full | Termux: local folder and local toolchain, no isolation. |
-| `security-lab` | Full | Limited | Remote host required | Full | Authorized security work only. Windows: limited by WSL 2 networking. |
+| `security-lab` | Full | Limited | Remote host required | Full | Built locally from rolling Kali. Authorized use only; rules must be accepted. Windows: limited (WSL 2). |
 | `custom` | Full | Full | Remote host required | Full |  |
 <!-- MATRIX:END -->
 

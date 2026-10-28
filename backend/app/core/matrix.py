@@ -46,10 +46,10 @@ MATRIX: Final[dict[str, tuple[str, str, str, str]]] = {
 }
 
 MATRIX_NOTES: Final[dict[str, str]] = {
-    "desktop-kali": "No verified maintained image is configured; disabled. Authorized security work only.",
+    "desktop-kali": "Built locally, rolling Kali (several GB). Authorized use only; rules required.",
     "browser-tor": "x86_64 only; needs outbound access. The build downloads and verifies Tor Browser.",
     "terminal-ubuntu": "Termux: would use proot-distro (no isolation).",
-    "security-lab": "Authorized security work only. Windows: limited by WSL 2 networking.",
+    "security-lab": "Built locally, rolling Kali. Authorized use only; rules required. Windows: limited.",
     "dev-python": "Termux: local folder and local toolchain, no isolation.",
     "dev-node": "Termux: local folder and local toolchain, no isolation.",
     "dev-web": "Termux: local folder and local toolchain, no isolation.",

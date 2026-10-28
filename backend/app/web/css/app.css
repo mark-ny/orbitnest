@@ -250,3 +250,15 @@ dialog::backdrop { background: rgba(3, 6, 16, .66); backdrop-filter: blur(5px); 
   h1 { font-size: 1.35rem; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; } }
+
+/* privacy + lab additions */
+.tag.tor { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+.tag.direct { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.tag.lab { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+.tplcard .tags { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.tpldetail { display: grid; gap: 10px; margin-top: 12px; }
+.rules { margin: 0; padding-left: 1.2rem; display: grid; gap: 4px; font-size: .88rem; }
+.capopt { display: flex; gap: 8px; align-items: flex-start; font-size: .88rem; }
+.capopt small { display: block; color: var(--muted); }
+pre.buildlog { max-height: 260px; overflow: auto; margin: 0; padding: 10px; border-radius: var(--radius-sm); background: var(--panel-2); border: 1px solid var(--line); font-size: .75rem; white-space: pre-wrap; word-break: break-all; }
+.banner[hidden] { display: none; }

@@ -168,3 +168,11 @@ login path (timing equalisation is coded, not measured).
 
 - 412 Python tests, ruff clean, 9 node tests at last run. New: stream gateway, image build plan, backup/restore, TOTP (RFC 6238 vectors), MFA flows incl. replay/lockout/CSRF, regex-anchor regression (`\Z` instead of `$` across all validators).
 - An automated independent security review was attempted but aborted by an API rate limit; **no independent review has been done**. Treat the threat model as the author's own.
+
+## Update: privacy labelling, lab, image installer, tuning
+
+- Browser templates now carry a privacy tag in the UI: "Uses your real IP" (Chromium, Firefox, desktops) versus "Routed through Tor". Chromium/Firefox are NOT anonymous; the Tor template is the only anonymising one, and it is Tor Browser in a container, not Tails.
+- Security Lab (CLI, `security-lab`) and Kali desktop (`desktop-kali`): locally built Kali images, authorized-use rules shown and required, optional capabilities NET_RAW / NET_ADMIN / SYS_PTRACE per workspace (audited), run as root inside an unprivileged container. Verified by argv/unit tests only; never built or run against Docker.
+- Admin one-click "Install image" (build with live log, cancel, one at a time). Tested with a fake planner, not a real `docker build`.
+- Performance: stream templates need at least "medium"; Chromium/Firefox launch with lighter flags and 16-bit colour, x11vnc polls less, noVNC uses lower compression. These are untested guesses at what helps; 1 GB cannot make Chromium feel like 2 GB. Per-workspace override file: `.orbitnest/session.env` in the workspace folder.
+- 428 Python tests pass, ruff clean.

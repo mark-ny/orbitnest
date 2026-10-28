@@ -171,9 +171,11 @@ class TemplateAndPolicyApiTests(ApiBase):
         self.assertEqual(len(items), 10)
         self.assertTrue(items["dev-python"]["availability"]["creatable"])
         self.assertTrue(items["browser-tor"]["availability"]["creatable"])
-        blocked = items["desktop-kali"]["availability"]
-        self.assertFalse(blocked["creatable"])
-        self.assertTrue(blocked["reason"])
+        lab = items["security-lab"]
+        self.assertEqual(lab["optional_capabilities"], ["NET_RAW", "NET_ADMIN", "SYS_PTRACE"])
+        self.assertTrue(lab["rules"])
+        self.assertEqual(items["browser-tor"]["privacy"], "tor")
+        self.assertEqual(items["browser-chromium"]["privacy"], "direct")
         self.assertNotIn("image", items["dev-python"])  # image/command internals are not exposed
         self.assertEqual(self.alice.get("/api/v1/templates/nope").status, 404)
         self.assertEqual(self.alice.get("/api/v1/templates/dev-node").json()["id"], "dev-node")

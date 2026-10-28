@@ -10,10 +10,16 @@ from pathlib import Path
 
 from app.services.templates import BUILTIN_TEMPLATES
 
-BASE_TAGS = {"debian": "orbitnest/stream-base:debian-1", "ubuntu": "orbitnest/stream-base:ubuntu-1"}
-BASE_IMAGES = {"debian": "debian:bookworm-slim", "ubuntu": "ubuntu:24.04"}
+BASE_TAGS = {
+    "debian": "orbitnest/stream-base:debian-1",
+    "ubuntu": "orbitnest/stream-base:ubuntu-1",
+    "kali": "orbitnest/stream-base:kali-1",
+}
+BASE_IMAGES = {"debian": "debian:bookworm-slim", "ubuntu": "ubuntu:24.04", "kali": "kalilinux/kali-rolling"}
 # Which base each template image is built on.
-NEEDS_BASE = {"stream-desktop-ubuntu": "ubuntu"}
+NEEDS_BASE = {"stream-desktop-ubuntu": "ubuntu", "stream-kali": "kali"}
+# Images that do not use a stream base (plain build contexts).
+NO_BASE = frozenset({"security-lab"})
 
 
 def docker_dir() -> Path:
@@ -33,7 +39,7 @@ def plan(selected: list[str] | None, root: Path | None = None, docker_bin: str =
     unknown = [n for n in names if n not in known]
     if unknown:
         raise ValueError(f"unknown image: {unknown[0]} (choose from: {', '.join(sorted(known))})")
-    bases = sorted({NEEDS_BASE.get(n, "debian") for n in names})
+    bases = sorted({NEEDS_BASE.get(n, "debian") for n in names if n not in NO_BASE})
     steps: list[list[str]] = []
     for base in bases:
         steps.append(

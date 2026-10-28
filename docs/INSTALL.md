@@ -75,6 +75,10 @@ Streaming templates (Chromium, Firefox, Tor Browser, Ubuntu desktop) need locall
 
     python -m app build-images            # all, or name some: python -m app build-images stream-chromium
 
+Administrators can also build images from the web UI: **Admin, Templates, Install image** (or by clicking an unavailable template in the New workspace dialog). Builds take minutes to over an hour; the log is shown live.
+
+Security Lab images are large (several GB) and rolling. Use `python -m app build-images security-lab` or `stream-kali`.
+
 Your user must be able to run `docker` (Linux: `sudo usermod -aG docker $USER`, then log in again). Reload the Templates page afterwards; no restart is needed. Expect 1-2 GB RAM per workspace. Lost authenticator: `python -m app disable-mfa <username>`.
 
 ## Operations

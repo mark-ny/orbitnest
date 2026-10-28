@@ -30,7 +30,7 @@ from app.services import audit, lifecycle, resources
 from app.services import policy as policy_mod
 from app.services.audit import RequestContext
 from app.services.jobs import JobRunner
-from app.services.templates import Availability, Template, TemplateRegistry, evaluate
+from app.services.templates import LAB_RULES_VERSION, Availability, Template, TemplateRegistry, evaluate
 from app.services.workspace_store import QuotaExceeded, Workspace, WorkspaceStore
 from app.storage.manager import StorageError, StorageManager
 
@@ -293,6 +293,7 @@ class WorkspaceService:
         labels: dict[str, str] | None = None,
         idempotency_key: str | None = None,
         acknowledge_authorized_use: bool = False,
+        capabilities: list[str] | None = None,
         ctx: RequestContext | None = None,
     ) -> tuple[Workspace, bool]:
         """Returns (workspace, created). ``created`` is False when an idempotency key replayed."""
@@ -330,11 +331,18 @@ class WorkspaceService:
                 422,
             )
 
+        extra_caps = self._validate_extra_caps(template, capabilities)
         profile_name = profile or template.default_profile
         try:
             res = resources.resolve_profile(profile_name, max_profile=template.max_profile)
         except resources.ProfileError as exc:
             raise _invalid("profile", str(exc)) from None
+        if template.min_profile and resources.profile_rank(profile_name) < resources.profile_rank(
+            template.min_profile
+        ):
+            raise _invalid(
+                "profile", f"{template.name} needs at least the {template.min_profile!r} size to run properly"
+            )
         persistence = persistence or template.default_persistence
         if persistence not in ("persistent", "disposable"):
             raise _invalid("persistence", "must be persistent or disposable")
@@ -369,6 +377,7 @@ class WorkspaceService:
             "idle_timeout_minutes": idle,
             "network_policy": network,
             "labels": label_map,
+            "extra_caps": extra_caps,
             "idempotency_key": idempotency_key,
         }
         volume = {
@@ -415,7 +424,16 @@ class WorkspaceService:
             "success",
             ws.id,
             ctx,
-            {"template": template.id, "profile": profile_name, "runtime": ws.runtime},
+            {
+                "template": template.id,
+                "profile": profile_name,
+                "runtime": ws.runtime,
+                **(
+                    {"lab_rules_accepted": LAB_RULES_VERSION, "capabilities": list(extra_caps)}
+                    if template.authorized_use_only
+                    else {}
+                ),
+            },
         )
         self._submit(self._provision, ws.id)
         return ws, True
@@ -590,6 +608,17 @@ class WorkspaceService:
                 409,
             )
 
+    @staticmethod
+    def _validate_extra_caps(template: Template, requested: list[str] | None) -> tuple[str, ...]:
+        caps = tuple(dict.fromkeys(requested or ()))
+        if not caps:
+            return ()
+        offered = set(template.optional_capabilities)
+        bad = [c for c in caps if c not in offered]
+        if bad:
+            raise _invalid("capabilities", f"not available for this template: {bad[0]}")
+        return caps
+
     # -- jobs ----------------------------------------------------------------------------
     @staticmethod
     def _spec(ws: Workspace, template: Template, data_dir: str) -> RuntimeSpec:
@@ -604,11 +633,12 @@ class WorkspaceService:
             network=ws.network_policy,
             mount_path=template.data_mount,
             data_dir=data_dir,
-            capabilities=template.capabilities,
+            capabilities=tuple(dict.fromkeys((*template.capabilities, *ws.extra_caps))),
             healthcheck=template.healthcheck,
             local_command=template.local_command,
             shm_mb=template.shm_mb,
             stream_port=template.stream_port,
+            run_as_root=template.run_as_root,
             labels={LABEL_WORKSPACE: ws.id},
         )
 

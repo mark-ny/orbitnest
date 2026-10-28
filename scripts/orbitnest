@@ -60,11 +60,14 @@ do_update() {
   git -C "$REPO_DIR" fetch --quiet
   git -C "$REPO_DIR" pull --ff-only --quiet || { say "Cannot fast-forward. Your copy has diverged from GitHub." >&2; exit 1; }
   after="$(git -C "$REPO_DIR" rev-parse --short HEAD)"
-  if [ "$before" = "$after" ]; then say "Already up to date ($after)."; return 0; fi
+  PENDING="$DATA_DIR/.update-pending"
+  if [ "$before" = "$after" ] && [ ! -f "$PENDING" ]; then say "Already up to date ($after)."; return 0; fi
+  touch "$PENDING"   # stays until every step below succeeds, so a failed update is retried next time
   say "Updated $before -> $after. Installing dependencies..."
   "$PY" -m pip install --quiet -r "$REPO_DIR/backend/requirements.txt"
   admin migrate
   if running; then say "Restarting..."; do_stop; do_start; else say "Server was not running; start it with: orbitnest start"; fi
+  rm -f "$PENDING"
   say "Done. If images changed, rebuild them from Admin > Templates."
 }
 

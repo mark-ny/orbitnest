@@ -19,6 +19,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
@@ -30,6 +31,9 @@ NETWORK_NAME = "orbitnest-workspaces"
 RESOURCE_ID_RE = re.compile(r"^[a-f0-9]{12,64}\Z")
 LABEL_MANAGED = "orbitnest.managed"
 LABEL_WORKSPACE = "orbitnest.workspace"
+LABEL_ROLE = "orbitnest.role"
+TOR_GATEWAY_IMAGE = "orbitnest/tor-gateway:1"
+GATEWAY_READY_SECONDS = 60.0
 
 # Viewer assets (the noVNC client) live at a fixed, root-owned path inside the image.
 ASSET_ROOT = "/usr/share/novnc"
@@ -82,6 +86,8 @@ class DockerRuntime(RuntimeAdapter):
     user: str | None = None
     spawn: Callable[..., ShellSession] = PtyShell.spawn
     shell_workdir: str = "/home/workspace"
+    supports_tor: bool = True
+    sleep: Callable[[float], None] = time.sleep
 
     # -- helpers -------------------------------------------------------------------------
     def _safe(self, text: str) -> str:
@@ -140,7 +146,11 @@ class DockerRuntime(RuntimeAdapter):
         if spec.data_dir is None:
             raise RuntimeFailure("a data directory is required")
         name = f"orbitnest-ws-{spec.workspace_id.lower()}"
-        network = "none" if spec.network == "none" else NETWORK_NAME
+        if spec.egress == "tor":
+            # Share the Tor gateway's network namespace: the only route out is through its firewall.
+            network = f"container:{self._gateway_name(spec.workspace_id)}"
+        else:
+            network = "none" if spec.network == "none" else NETWORK_NAME
         argv = [
             self.docker_bin,
             "create",
@@ -212,22 +222,122 @@ class DockerRuntime(RuntimeAdapter):
         argv += list(spec.command)
         return argv
 
+    # -- Tor gateway ---------------------------------------------------------------------
+    @staticmethod
+    def _gateway_name(workspace_id: str) -> str:
+        return f"orbitnest-tor-{workspace_id.lower()}"
+
+    def build_gateway_argv(self, workspace_id: str) -> list[str]:
+        """The per-workspace Tor gateway: owns the network namespace and its firewall.
+
+        It is the only container with NET_ADMIN, and the workspace (which shares its namespace) has
+        every capability dropped, so the workload cannot change the rules. The entrypoint installs
+        them BEFORE signalling readiness; the workspace is only created after that.
+        """
+        name = self._gateway_name(workspace_id)
+        return [
+            self.docker_bin, "create",
+            "--name", name,
+            "--label", f"{LABEL_MANAGED}=true",
+            "--label", f"{LABEL_WORKSPACE}={workspace_id}",
+            "--label", f"{LABEL_ROLE}=tor-gateway",
+            "--init",
+            "--cap-drop", "ALL",
+            "--cap-add", "NET_ADMIN", "--cap-add", "SETUID", "--cap-add", "SETGID",
+            "--cap-add", "CHOWN", "--cap-add", "DAC_OVERRIDE", "--cap-add", "FOWNER",
+            "--security-opt", "no-new-privileges:true",
+            "--read-only",
+            "--tmpfs", "/var/lib/tor:rw,nosuid,nodev,size=64m",
+            "--tmpfs", "/run:rw,nosuid,nodev,size=8m",
+            "--tmpfs", "/tmp:rw,nosuid,nodev,size=16m",  # noqa: S108
+            "--pids-limit", "128",
+            "--memory", "256m", "--memory-swap", "256m",
+            "--cpus", "0.50",
+            "--network", NETWORK_NAME,
+            "--ipc", "private",
+            "--restart", "no",
+            "--health-cmd", "test -f /run/orbitnest-gateway-ready",
+            "--health-interval", "2s", "--health-timeout", "3s", "--health-retries", "20",
+            "--log-driver", "json-file", "--log-opt", "max-size=5m", "--log-opt", "max-file=2",
+            TOR_GATEWAY_IMAGE,
+        ]  # fmt: skip
+
+    def _wait_gateway(self, name: str) -> None:
+        end = time.monotonic() + GATEWAY_READY_SECONDS
+        while time.monotonic() < end:
+            res = self._docker(["inspect", "--format", "{{json .State}}", name], timeout=15)
+            if res.returncode == 0:
+                try:
+                    st = json.loads(res.stdout)
+                except json.JSONDecodeError:
+                    st = {}
+                if st.get("Status") in ("exited", "dead"):
+                    break
+                if (st.get("Health") or {}).get("Status") == "healthy":
+                    return
+            self.sleep(1.0)
+        raise RuntimeFailure(
+            "The Tor gateway did not become ready. Nothing was started, so nothing could leak.",
+            operation="gateway",
+        )
+
+    def _start_gateway(self, name: str) -> None:
+        self._check(self._docker(["start", name], timeout=60), "start gateway")
+        self._wait_gateway(name)
+
+    def _gateway_of(self, rid: str) -> str | None:
+        """Name of the gateway this workspace container is attached to, if any."""
+        res = self._docker(["inspect", "--format", "{{.Name}} {{.HostConfig.NetworkMode}}", rid], timeout=15)
+        if res.returncode != 0:
+            return None
+        parts = res.stdout.split()
+        if len(parts) == 2 and parts[1].startswith("container:orbitnest-tor-"):
+            return parts[1].split(":", 1)[1]
+        return None
+
     # -- adapter API ---------------------------------------------------------------------
     def create(self, spec: RuntimeSpec) -> str:
         argv = self.build_create_argv(spec)  # validates first: invalid specs never reach docker
         if spec.network != "none":
             self.ensure_network()
-        result = self._check(self.run(argv, CREATE_TIMEOUT), "create")
+        gateway: str | None = None
+        if spec.egress == "tor":
+            gateway = self._gateway_name(spec.workspace_id)
+            self._docker(["rm", "-f", gateway], timeout=60)  # leftover from a failed attempt
+            self._check(
+                self.run(self.build_gateway_argv(spec.workspace_id), CREATE_TIMEOUT), "create gateway"
+            )
+            try:
+                self._start_gateway(gateway)
+            except RuntimeFailure:
+                self._docker(["rm", "-f", gateway], timeout=60)
+                raise
+        try:
+            result = self._check(self.run(argv, CREATE_TIMEOUT), "create")
+        except RuntimeFailure:
+            if gateway:
+                self._docker(["rm", "-f", gateway], timeout=60)
+            raise
         container_id = (result.stdout.strip().splitlines() or [""])[-1]
         if not RESOURCE_ID_RE.match(container_id):
+            if gateway:
+                self._docker(["rm", "-f", gateway], timeout=60)
             raise RuntimeFailure("docker create returned an unexpected result", operation="create")
         return container_id
 
     def start(self, resource_id: str) -> None:
-        self._check(self._docker(["start", self._rid(resource_id)], timeout=60), "start")
+        rid = self._rid(resource_id)
+        gateway = self._gateway_of(rid)
+        if gateway:
+            # The firewall must be up before the workload is. A restarted gateway gets a new network
+            # namespace, so the workspace is always (re)started after it.
+            self._docker(["stop", "-t", "2", rid], timeout=30)
+            self._start_gateway(gateway)
+        self._check(self._docker(["start", rid], timeout=60), "start")
 
     def stop(self, resource_id: str, grace_seconds: int) -> None:
         rid = self._rid(resource_id)
+        gateway = self._gateway_of(rid)
         grace = max(1, min(int(grace_seconds), 120))
         # `docker stop -t N` sends SIGTERM then SIGKILL after N seconds.
         self._check(
@@ -241,13 +351,19 @@ class DockerRuntime(RuntimeAdapter):
             self._check(self._docker(["kill", rid]), "kill", tolerate=("is not running", "no such container"))
             if self.inspect(rid).state == "running":
                 raise RuntimeFailure("container did not stop", operation="stop")
+        if gateway:
+            self._docker(["stop", "-t", "2", gateway], timeout=30)
 
     def remove(self, resource_id: str) -> None:
+        rid = self._rid(resource_id)
+        gateway = self._gateway_of(rid)
         self._check(
-            self._docker(["rm", "-f", self._rid(resource_id)], timeout=60),
+            self._docker(["rm", "-f", rid], timeout=60),
             "remove",
             tolerate=("no such container",),
         )
+        if gateway:
+            self._docker(["rm", "-f", gateway], timeout=60)
 
     def inspect(self, resource_id: str) -> RuntimeState:
         result = self._docker(["inspect", "--format", "{{json .State}}", self._rid(resource_id)])
@@ -366,5 +482,7 @@ class DockerRuntime(RuntimeAdapter):
             rid = str(item.get("ID", ""))
             if RESOURCE_ID_RE.match(rid):
                 labels = dict(p.split("=", 1) for p in str(item.get("Labels", "")).split(",") if "=" in p)
+                if labels.get(LABEL_ROLE) == "tor-gateway":
+                    continue  # helpers are removed together with their workspace, never listed as orphans
                 found[rid] = labels
         return found

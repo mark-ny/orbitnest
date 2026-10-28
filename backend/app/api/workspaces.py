@@ -38,7 +38,7 @@ _TEMPLATE_PUBLIC = (
     "default_persistence", "default_idle_minutes", "network_policy", "allowed_networks",
     "authorized_use_only", "deprecated", "deprecation_note", "update_policy", "enabled",
     "disabled_reason", "notes", "builtin", "local_supported", "optional_capabilities", "privacy",
-    "recommended_profile", "min_profile",
+    "recommended_profile", "min_profile", "default_egress", "allowed_egress",
 )  # fmt: skip
 
 
@@ -69,6 +69,7 @@ def workspace_json(ws: Workspace, *, include_owner: bool = False) -> dict[str, A
         "network_policy": ws.network_policy,
         "labels": ws.labels,
         "capabilities": list(ws.extra_caps),
+        "egress": ws.egress,
         "data": ws.volume_state,
         "created_at": ws.created_at,
         "updated_at": ws.updated_at,

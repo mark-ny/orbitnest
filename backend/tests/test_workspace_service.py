@@ -244,7 +244,9 @@ class ValidationTests(ServiceHarness):
         self.assertEqual(
             code_of(lambda: self.make_ws(template="dev-python", capabilities=["NET_RAW"]))[1], 422
         )
-        ws = self.make_ws(template="security-lab", acknowledge_authorized_use=True, capabilities=caps)
+        ws = self.make_ws(
+            template="security-lab", acknowledge_authorized_use=True, capabilities=caps, egress="direct"
+        )
         self.assertEqual(ws.extra_caps, ("NET_RAW", "NET_ADMIN"))
         inst = self.store.current_instance(ws.id)
         spec = self.fake.resources[inst.resource_id].spec
@@ -255,6 +257,56 @@ class ValidationTests(ServiceHarness):
         details = str(created[0].get("details"))
         self.assertIn(LAB_RULES_VERSION, details)
         self.assertIn("NET_RAW", details)
+
+    def test_tor_egress_defaults_and_rules(self) -> None:
+        # Browsers and labs go through Tor unless the user explicitly chooses otherwise.
+        ws = self.make_ws(template="browser-chromium", profile="medium")
+        self.assertEqual(ws.egress, "tor")
+        spec = self.fake.resources[self.store.current_instance(ws.id).resource_id].spec
+        self.assertEqual(spec.egress, "tor")
+        self.assertIn(ws.id, self.fake.ops("gateway"))
+        direct = self.make_ws(name="two", template="browser-chromium", profile="medium", egress="direct")
+        self.assertEqual(direct.egress, "direct")
+        # Tor Browser has its own Tor: only direct is offered for it.
+        bob = self.bob
+        self.assertEqual(
+            code_of(lambda: self.make_ws(bob, name="t", template="browser-tor", egress="tor"))[1], 422
+        )
+        self.assertEqual(self.make_ws(bob, name="t2", template="browser-tor").egress, "direct")
+        # Terminals/dev tools default to direct but can opt in.
+        self.assertEqual(self.make_ws(bob, name="d", template="dev-python").egress, "direct")
+        admin = self.admin
+        self.assertEqual(self.make_ws(admin, name="d2", template="dev-python", egress="tor").egress, "tor")
+        # Nonsense values and the network "none" combination are refused.
+        self.assertEqual(
+            code_of(lambda: self.make_ws(admin, name="x", template="dev-python", egress="vpn"))[1], 422
+        )
+        self.assertEqual(
+            code_of(
+                lambda: self.make_ws(admin, name="y", template="dev-python", egress="tor", network="none")
+            )[1],
+            422,
+        )
+
+    def test_tor_refused_with_net_admin_and_without_gateway_image(self) -> None:
+        self.assertEqual(
+            code_of(
+                lambda: self.make_ws(
+                    template="security-lab",
+                    acknowledge_authorized_use=True,
+                    capabilities=["NET_ADMIN"],
+                    egress="tor",
+                )
+            )[1],
+            422,
+        )
+        # No gateway image: creation fails closed. It never silently falls back to a direct connection.
+        self.fake.images = {"orbitnest/stream-chromium:1"}
+        self.assertEqual(
+            code_of(lambda: self.make_ws(name="g", template="browser-chromium", profile="medium"))[0],
+            "template_unavailable",
+        )
+        self.assertEqual(self.store.list(owner_id=self.alice.id)[1], 0)
 
     def test_browsers_refuse_sizes_that_cannot_run_them(self) -> None:
         self.assertEqual(code_of(lambda: self.make_ws(template="browser-chromium", profile="small"))[1], 422)

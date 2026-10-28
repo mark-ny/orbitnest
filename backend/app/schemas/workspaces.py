@@ -20,6 +20,7 @@ class CreateWorkspaceRequest(_Strict):
     idle_timeout_minutes: int | None = Field(default=None, ge=0, le=60 * 24 * 14)
     labels: dict[str, str] | None = Field(default=None, max_length=10)
     acknowledge_authorized_use: bool = False
+    egress: str | None = Field(default=None, max_length=8)
     capabilities: list[str] | None = Field(default=None, max_length=8)
 
 

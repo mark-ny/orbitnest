@@ -87,6 +87,114 @@ class ScriptedDocker:
         return [c[1] for c in self.calls]
 
 
+class GatewayDocker(ScriptedDocker):
+    """Adds what the Tor gateway flow asks docker for."""
+
+    def __init__(self, healthy: bool = True) -> None:
+        super().__init__()
+        self.healthy = healthy
+
+    def __call__(self, argv, timeout):
+        argv = list(argv)
+        if argv[1] == "inspect" and "{{.Name}}" in " ".join(argv):
+            self.calls.append(argv)
+            return CommandResult(0, f"/orbitnest-ws-x container:orbitnest-tor-{WSID.lower()}\n", "")
+        if argv[1] == "inspect" and argv[-1].startswith("orbitnest-tor-"):
+            self.calls.append(argv)
+            state = {"Status": "running", "Health": {"Status": "healthy" if self.healthy else "starting"}}
+            return CommandResult(0, json.dumps(state), "")
+        return super().__call__(argv, timeout)
+
+
+class TorGatewayTests(unittest.TestCase):
+    def rt(self, **kw):
+        cli = GatewayDocker(**kw)
+        return cli, DockerRuntime(run=cli, user="1000:1000", sleep=lambda _s: None)
+
+    def test_gateway_argv_is_locked_down(self) -> None:
+        _cli, rt = self.rt()
+        a = rt.build_gateway_argv(WSID)
+        joined = " ".join(a)
+        self.assertFalse(FORBIDDEN_FLAGS & set(a))
+        self.assertEqual(a[a.index("--cap-drop") + 1], "ALL")
+        added = {a[i + 1] for i, x in enumerate(a) if x == "--cap-add"}
+        self.assertIn("NET_ADMIN", added)  # only the gateway may touch the firewall
+        self.assertFalse(added & {"SYS_ADMIN", "NET_RAW", "SYS_MODULE", "SYS_PTRACE"})
+        for needle in ("--read-only", "no-new-privileges:true", "--pids-limit 128", "--memory 256m"):
+            self.assertIn(needle, joined)
+        self.assertEqual(a[-1], "orbitnest/tor-gateway:1")
+        self.assertIn("orbitnest.role=tor-gateway", joined)
+        self.assertNotIn("--mount", a)
+
+    def test_workspace_joins_the_gateway_namespace_with_no_caps(self) -> None:
+        _cli, rt = self.rt()
+        a = rt.build_create_argv(make_spec("/srv/x", egress="tor"))
+        self.assertEqual(a[a.index("--network") + 1], f"container:orbitnest-tor-{WSID.lower()}")
+        self.assertNotIn("--cap-add", a)
+        self.assertNotIn("--dns", a)
+
+    def test_workload_can_never_hold_net_admin_with_tor(self) -> None:
+        with self.assertRaises(RuntimeSpecError):
+            make_spec("/srv/x", egress="tor", capabilities=("NET_ADMIN",)).validate()
+        with self.assertRaises(RuntimeSpecError):
+            make_spec("/srv/x", egress="tor", network="none").validate()
+        with self.assertRaises(RuntimeSpecError):
+            make_spec("/srv/x", egress="vpn").validate()
+
+    def test_create_starts_gateway_and_waits_before_creating_workspace(self) -> None:
+        cli, rt = self.rt()
+        rt.create(make_spec("/srv/x", egress="tor"))
+        creates = [c for c in cli.calls if c[1] == "create"]
+        self.assertEqual(len(creates), 2)
+        self.assertEqual(creates[0][-1], "orbitnest/tor-gateway:1")  # gateway first
+        self.assertEqual(creates[1][creates[1].index("--network") + 1][:10], "container:")
+        order = [c[1] for c in cli.calls]
+        self.assertLess(order.index("start"), order.index("create", order.index("create") + 1))
+
+    def test_unhealthy_gateway_means_the_workspace_is_never_created(self) -> None:
+        import app.runtimes.docker_runtime as dr
+
+        old = dr.GATEWAY_READY_SECONDS
+        dr.GATEWAY_READY_SECONDS = 0.05
+        try:
+            cli, rt = self.rt(healthy=False)
+            with self.assertRaises(RuntimeFailure) as cm:
+                rt.create(make_spec("/srv/x", egress="tor"))
+        finally:
+            dr.GATEWAY_READY_SECONDS = old
+        self.assertIn("nothing could leak", cm.exception.safe_message)
+        self.assertEqual(len([c for c in cli.calls if c[1] == "create"]), 1)  # only the gateway
+        self.assertTrue(any(c[1] == "rm" and c[-1].startswith("orbitnest-tor-") for c in cli.calls))
+
+    def test_start_brings_the_gateway_up_first_and_remove_cleans_it(self) -> None:
+        cli, rt = self.rt()
+        rt.start(CID)
+        starts = [c[-1] for c in cli.calls if c[1] == "start"]
+        self.assertEqual(starts, [f"orbitnest-tor-{WSID.lower()}", CID])
+        cli.calls.clear()
+        rt.remove(CID)
+        removed = [c[-1] for c in cli.calls if c[1] == "rm"]
+        self.assertEqual(removed, [CID, f"orbitnest-tor-{WSID.lower()}"])
+
+    def test_gateways_are_not_listed_as_orphans(self) -> None:
+        cli = ScriptedDocker()
+        rt = DockerRuntime(run=cli, user="1000:1000")
+        listing = json.dumps(
+            {
+                "ID": "b" * 64,
+                "Labels": f"orbitnest.managed=true,orbitnest.workspace={WSID},orbitnest.role=tor-gateway",
+            }
+        )
+        cli.rc_override["ps"] = CommandResult(0, listing, "")
+        self.assertEqual(rt.list_managed(), {})
+
+    def test_gateway_image_names_agree(self) -> None:
+        from app.runtimes.docker_runtime import TOR_GATEWAY_IMAGE
+        from app.services import images
+
+        self.assertEqual(images.HELPER_IMAGES["tor-gateway"], TOR_GATEWAY_IMAGE)
+
+
 class StreamArgvTests(unittest.TestCase):
     def rt(self):
         return DockerRuntime(run=ScriptedDocker(), user="1000:1000")

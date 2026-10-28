@@ -53,6 +53,7 @@ class RuntimeSpec:
     shm_mb: int = 64
     stream_port: int | None = None
     run_as_root: bool = False
+    egress: str = "direct"  # "tor": all traffic is forced through a Tor gateway (fail closed)
     labels: dict[str, str] = field(default_factory=dict)
 
     def validate(self) -> None:
@@ -71,6 +72,12 @@ class RuntimeSpec:
                 raise RuntimeSpecError(f"{name} must start with an executable")
         if self.network not in NETWORKS:
             raise RuntimeSpecError("network policy not allowed")
+        if self.egress not in ("direct", "tor"):
+            raise RuntimeSpecError("egress not allowed")
+        if self.egress == "tor" and self.network == "none":
+            raise RuntimeSpecError("Tor routing needs a network")
+        if self.egress == "tor" and "NET_ADMIN" in self.capabilities:
+            raise RuntimeSpecError("NET_ADMIN would let the workload remove the Tor firewall")
         if not 100 <= self.cpu_millis <= 4000:
             raise RuntimeSpecError("cpu limit out of range")
         if not 64 <= self.memory_mb <= 8192:
@@ -119,6 +126,7 @@ class RuntimeState:
 class RuntimeAdapter(ABC):
     name: str
     isolation: Literal["container", "none"]
+    supports_tor: bool = False  # can force all of a workload's traffic through Tor
 
     @abstractmethod
     def create(self, spec: RuntimeSpec) -> str:

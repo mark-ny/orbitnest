@@ -26,6 +26,7 @@ from app.core.ids import from_iso, new_id, to_iso, utcnow
 from app.core.platform import Capabilities
 from app.db import Database
 from app.runtimes.base import RuntimeAdapter, RuntimeFailure, RuntimeSpec, RuntimeSpecError
+from app.runtimes.docker_runtime import TOR_GATEWAY_IMAGE
 from app.services import audit, lifecycle, resources
 from app.services import policy as policy_mod
 from app.services.audit import RequestContext
@@ -37,6 +38,9 @@ from app.storage.manager import StorageError, StorageManager
 if TYPE_CHECKING:
     from app.auth.service import User
 
+REMEDY_TOR_GATEWAY = (
+    "Install the Tor gateway image: Admin, Templates (or: python -m app build-images tor-gateway)."
+)
 log = logging.getLogger("orbitnest.workspaces")
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}\Z")
@@ -294,6 +298,7 @@ class WorkspaceService:
         idempotency_key: str | None = None,
         acknowledge_authorized_use: bool = False,
         capabilities: list[str] | None = None,
+        egress: str | None = None,
         ctx: RequestContext | None = None,
     ) -> tuple[Workspace, bool]:
         """Returns (workspace, created). ``created`` is False when an idempotency key replayed."""
@@ -349,6 +354,7 @@ class WorkspaceService:
         network = network or template.network_policy
         if network not in template.allowed_networks:
             raise _invalid("network", f"this template allows: {', '.join(template.allowed_networks)}")
+        egress = self._validate_egress(template, adapter, egress, network, extra_caps)
         if idle_timeout_minutes is None:
             idle: int | None = template.default_idle_minutes
         elif idle_timeout_minutes == 0:
@@ -378,6 +384,7 @@ class WorkspaceService:
             "network_policy": network,
             "labels": label_map,
             "extra_caps": extra_caps,
+            "egress": egress,
             "idempotency_key": idempotency_key,
         }
         volume = {
@@ -428,6 +435,7 @@ class WorkspaceService:
                 "template": template.id,
                 "profile": profile_name,
                 "runtime": ws.runtime,
+                "egress": egress,
                 **(
                     {"lab_rules_accepted": LAB_RULES_VERSION, "capabilities": list(extra_caps)}
                     if template.authorized_use_only
@@ -609,6 +617,38 @@ class WorkspaceService:
             )
 
     @staticmethod
+    def _validate_egress(
+        template: Template,
+        adapter: RuntimeAdapter,
+        requested: str | None,
+        network: str,
+        extra_caps: tuple[str, ...],
+    ) -> str:
+        if requested is not None and requested not in template.allowed_egress:
+            raise _invalid("egress", f"this template allows: {', '.join(template.allowed_egress)}")
+        egress = requested or template.default_egress
+        if egress != "tor":
+            return "direct"
+        if not adapter.supports_tor:
+            if requested is None:
+                return "direct"  # a default never blocks creation on a host that cannot do it...
+            raise _invalid("egress", "Tor routing needs container isolation; this host cannot do it.")
+        if network == "none":
+            raise _invalid("egress", "Tor routing needs a network; it cannot be combined with 'none'.")
+        if "NET_ADMIN" in extra_caps:
+            raise _invalid(
+                "capabilities", "NET_ADMIN cannot be combined with Tor routing: it could remove the firewall."
+            )
+        if adapter.has_image(TOR_GATEWAY_IMAGE) is False:
+            raise errors.AppError(
+                errors.TEMPLATE_UNAVAILABLE,
+                "Tor routing needs the Tor gateway image, which is not installed yet.",
+                409,
+                [{"remediation": REMEDY_TOR_GATEWAY}],
+            )
+        return "tor"
+
+    @staticmethod
     def _validate_extra_caps(template: Template, requested: list[str] | None) -> tuple[str, ...]:
         caps = tuple(dict.fromkeys(requested or ()))
         if not caps:
@@ -634,6 +674,7 @@ class WorkspaceService:
             mount_path=template.data_mount,
             data_dir=data_dir,
             capabilities=tuple(dict.fromkeys((*template.capabilities, *ws.extra_caps))),
+            egress=ws.egress,
             healthcheck=template.healthcheck,
             local_command=template.local_command,
             shm_mb=template.shm_mb,

@@ -1,0 +1,47 @@
+#!/bin/sh
+# Installs the firewall first, then signals readiness, then runs Tor in the foreground.
+set -eu
+
+TOR_USER=debian-tor
+TOR_UID="$(id -u "$TOR_USER")"
+
+# The nft and legacy iptables backends are not interchangeable; use whichever the kernel supports.
+IPT=iptables
+IP6T=ip6tables
+if ! $IPT -S >/dev/null 2>&1; then IPT=iptables-legacy; fi
+if ! $IP6T -S >/dev/null 2>&1; then IP6T=ip6tables-legacy; fi
+
+chown "$TOR_USER:$TOR_USER" /var/lib/tor
+chmod 0700 /var/lib/tor
+
+# ---- NAT: send everything that is not Tor's own traffic into Tor ---------------------------------
+$IPT -t nat -F OUTPUT
+$IPT -t nat -I OUTPUT 1 -m owner --uid-owner "$TOR_UID" -j RETURN
+# DNS first, so that Docker's embedded resolver on 127.0.0.11 (a loopback address) is also caught.
+$IPT -t nat -A OUTPUT -p udp --dport 53 -j REDIRECT --to-ports 5353
+$IPT -t nat -A OUTPUT -o lo -j RETURN
+$IPT -t nat -A OUTPUT -p tcp --syn -j REDIRECT --to-ports 9040
+
+# ---- filter: default deny, then allow only loopback and Tor itself --------------------------------
+$IPT -F
+$IPT -P INPUT DROP
+$IPT -P FORWARD DROP
+$IPT -P OUTPUT DROP
+$IPT -A INPUT -i lo -j ACCEPT
+$IPT -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+$IPT -A OUTPUT -o lo -j ACCEPT
+$IPT -A OUTPUT -m owner --uid-owner "$TOR_UID" -j ACCEPT
+# Everything else (UDP, ICMP, TCP that somehow escaped the redirect) falls to the DROP policy.
+
+# IPv6 is not carried by this gateway: drop it entirely.
+$IP6T -F || true
+$IP6T -P INPUT DROP || true
+$IP6T -P FORWARD DROP || true
+$IP6T -P OUTPUT DROP || true
+
+# Refuse to start without the rules in place.
+$IPT -S OUTPUT | grep -q -- '-P OUTPUT DROP'
+$IPT -t nat -S OUTPUT | grep -q -- 'REDIRECT --to-ports 9040'
+
+touch /run/orbitnest-gateway-ready
+exec tor -f /etc/tor/orbitnest-torrc

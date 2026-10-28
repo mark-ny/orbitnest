@@ -89,6 +89,10 @@ class Template(BaseModel):
     default_persistence: Literal["persistent", "disposable"] = "persistent"
     default_idle_minutes: int | None = Field(default=60, ge=1, le=60 * 24 * 14)
     network_policy: NetworkPolicy = "isolated-bridge"
+    # Where traffic leaves from: "direct" = this host's own connection (real IP), "tor" = forced
+    # through a per-workspace Tor gateway. Containers only; the local (Termux) runtime cannot do Tor.
+    default_egress: Literal["direct", "tor"] = "direct"
+    allowed_egress: tuple[Literal["direct", "tor"], ...] = ("direct", "tor")
     allowed_networks: tuple[NetworkPolicy, ...] = ("isolated-bridge", "none")
     published_ports: tuple[int, ...] = ()
     # Streamed templates: the VNC port INSIDE the container. It is never published to the host; the
@@ -198,6 +202,8 @@ class Template(BaseModel):
             raise ValueError("a deprecated template needs a deprecation_note")
         if self.local_command and not self.local_supported:
             raise ValueError("local_command requires local_supported")
+        if self.default_egress not in self.allowed_egress:
+            raise ValueError("default_egress must be one of allowed_egress")
         if self.run_as_root and not self.authorized_use_only:
             raise ValueError("run_as_root requires authorized_use_only")
         if self.optional_capabilities and not self.authorized_use_only:
@@ -237,6 +243,7 @@ BUILTIN_TEMPLATES: tuple[Template, ...] = (
         category="browser",
         image="orbitnest/stream-chromium:1",
         build_context="stream-chromium",
+        default_egress="tor",
         access="stream",
         stream_port=5900,
         shm_mb=512,
@@ -255,6 +262,7 @@ BUILTIN_TEMPLATES: tuple[Template, ...] = (
         category="browser",
         image="orbitnest/stream-firefox:1",
         build_context="stream-firefox",
+        default_egress="tor",
         access="stream",
         stream_port=5900,
         shm_mb=512,
@@ -276,6 +284,8 @@ BUILTIN_TEMPLATES: tuple[Template, ...] = (
         category="browser",
         image="orbitnest/stream-tor:1",
         build_context="stream-tor",
+        default_egress="direct",
+        allowed_egress=("direct",),
         access="stream",
         stream_port=5900,
         shm_mb=512,
@@ -299,6 +309,7 @@ BUILTIN_TEMPLATES: tuple[Template, ...] = (
         category="desktop",
         image="orbitnest/stream-desktop-ubuntu:1",
         build_context="stream-desktop-ubuntu",
+        default_egress="tor",
         access="stream",
         stream_port=5900,
         shm_mb=512,
@@ -319,6 +330,7 @@ BUILTIN_TEMPLATES: tuple[Template, ...] = (
         category="desktop",
         image="orbitnest/stream-kali:1",
         build_context="stream-kali",
+        default_egress="tor",
         access="stream",
         stream_port=5900,
         shm_mb=512,
@@ -386,6 +398,7 @@ BUILTIN_TEMPLATES: tuple[Template, ...] = (
         category="security",
         image="orbitnest/security-lab:1",
         build_context="security-lab",
+        default_egress="tor",
         command=_IDLE,
         default_profile="medium",
         recommended_profile="medium",

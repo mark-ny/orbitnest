@@ -87,7 +87,8 @@ export async function workspacesView() {
 const RANK = { small: 0, medium: 1, large: 2 };
 
 function privacyTag(t) {
-  if (t.privacy === "tor") return h("span", { class: "tag tor", text: "Routed through Tor" });
+  if (t.privacy === "tor") return h("span", { class: "tag tor", text: "Tor Browser" });
+  if ((t.allowed_egress || []).includes("tor")) return h("span", { class: "tag tor", text: t.default_egress === "tor" ? "Routed through Tor" : "Tor available" });
   if (t.privacy === "direct") return h("span", { class: "tag direct", text: "Uses your real IP" });
   return null;
 }
@@ -104,6 +105,10 @@ async function createDialog(templates) {
   const sizeWarn = h("div", { class: "banner warn", hidden: true });
   const rulesBox = h("input", { type: "checkbox", id: "f-rules" });
   const capBoxes = new Map();
+  const egressSel = h("select", { id: "f-egress" });
+  const egressWarn = h("div", { class: "banner warn", hidden: true });
+  const netBanner = h("div", {});
+  const EGRESS_LABEL = { tor: "Through Tor (hides your IP from sites you visit)", direct: "Direct (this computer's real IP, no Tor)" };
 
   const paintDetail = () => {
     const t = current();
@@ -124,11 +129,41 @@ async function createDialog(templates) {
     sizeSel.onchange = checkSize;
     checkSize();
     add(detail, h("div", { class: "field" }, h("label", { for: "f-size", text: "Size" }), sizeSel), sizeWarn);
-    if (t.privacy === "direct") {
-      add(detail, h("div", { class: "banner warn" }, icon("shield"), h("div", {}, h("strong", { text: "Not anonymous. " }), "Sites you visit here see this computer's real IP address and internet provider, exactly as in a normal browser. This only separates the browser from your files. For privacy choose Tor Browser.")));
-    } else if (t.privacy === "tor") {
-      add(detail, h("div", { class: "banner" }, icon("onion"), h("div", {}, h("strong", { text: "Tor Browser. " }), "Web traffic goes through Tor, so sites see a Tor exit instead of your IP. Data is erased when the workspace stops. This is not Tails: your internet provider can see that you use Tor, and accounts you sign in to identify you.")));
+    clear(egressSel);
+    clear(netBanner);
+    egressWarn.hidden = true;
+    const choices = t.allowed_egress || [];
+    const paintNetBanner = () => {
+      clear(netBanner);
+      if (t.privacy === "tor") {
+        // Tor Browser runs its own Tor process; it never joins the shared gateway.
+        add(netBanner, h("div", { class: "banner" }, icon("onion"), h("div", {}, h("strong", { text: "Tor Browser. " }), "Web traffic goes through Tor, so sites see a Tor exit instead of your IP. Data is erased when the workspace stops. This is not Tails: your internet provider can see that you use Tor, and accounts you sign in to identify you.")));
+      } else if (egressSel.value === "tor") {
+        add(netBanner, h("div", { class: "banner" }, icon("onion"), h("div", {}, h("strong", { text: "Routed through Tor. " }), "This workspace's network goes through a per-workspace Tor gateway, so sites it reaches see a Tor exit, not this computer's IP. It is an ordinary browser otherwise, not Tor Browser: its fingerprint can still differ, and anything you sign in to still identifies you.")));
+      } else {
+        add(netBanner, h("div", { class: "banner warn" }, icon("shield"), h("div", {}, h("strong", { text: "Not anonymous. " }), "Sites you visit here see this computer's real IP address and internet provider, exactly as in a normal browser. This only separates the browser from your files. For privacy, choose \"Through Tor\" above or use the Tor Browser template.")));
+      }
+    };
+    if (choices.length > 1) {
+      for (const e of choices) egressSel.append(h("option", { value: e, text: EGRESS_LABEL[e] || e }));
+      egressSel.value = t.default_egress || choices[0];
+      const checkEgress = () => {
+        const noGateway = egressSel.value === "tor" && t.tor_gateway_installed === false;
+        egressWarn.hidden = !noGateway;
+        egressWarn.textContent = noGateway ? "The Tor gateway image is not installed. An administrator can install it from Admin, Templates; until then this workspace will fail to start on Tor." : "";
+        paintNetBanner();
+      };
+      egressSel.onchange = checkEgress;
+      checkEgress();
+      add(detail, h("div", { class: "field" }, h("label", { for: "f-egress", text: "Network" }), egressSel), egressWarn);
+    } else if (choices.length === 1) {
+      egressSel.append(h("option", { value: choices[0] }));
+      egressSel.value = choices[0];
+      paintNetBanner();
+    } else {
+      paintNetBanner();
     }
+    add(detail, netBanner);
     if (t.authorized_use_only) {
       add(detail, h("div", { class: "card stack" },
         h("strong", { text: "Authorized security testing only" }),
@@ -154,7 +189,7 @@ async function createDialog(templates) {
       const c = h("button", { type: "button", class: "tplcard", role: "radio", "aria-checked": String(t.id === chosen), "aria-disabled": String(!ok), title: ok ? "" : t.availability.reason || "Unavailable",
         onclick: async () => {
           if (!ok) {
-            if (needsBuild && isAdmin) { if (await installImageDialog(t)) { await reloadTemplates(); } else { await reloadTemplates(); } return; }
+            if (needsBuild && isAdmin) { if (await installImageDialog({ ...t, buildPath: `/templates/${t.id}/build` })) { await reloadTemplates(); } else { await reloadTemplates(); } return; }
             toast(needsBuild ? "This image is not installed yet. Ask an administrator to install it (Admin, Templates)." : t.availability.reason || "Unavailable", "error");
             return;
           }
@@ -192,6 +227,7 @@ async function createDialog(templates) {
       read: () => ({
         template_id: chosen, profile: sizeSel.value, rules: rulesBox.checked,
         capabilities: [...capBoxes].filter(([, b]) => b.checked).map(([c]) => c),
+        egress: egressSel.value || "",
       }),
     },
     fields: [
@@ -206,6 +242,7 @@ async function createDialog(templates) {
   if (v.idle !== "") body.idle_timeout_minutes = Number(v.idle);
   if (v.rules) body.acknowledge_authorized_use = true;
   if (v.capabilities.length) body.capabilities = v.capabilities;
+  if (v.egress) body.egress = v.egress;
   const created = await run("Create failed", () => api("POST", "/workspaces", { json: body }));
   if (created && created !== true) navigate(`#/w/${created.id}`);
 }
@@ -290,7 +327,7 @@ export async function workspaceView(id, tab = "overview") {
         h("dt", { text: "Runtime" }), h("dd", { text: `${ws.runtime} (${ws.isolation === "container" ? "container" : "no isolation"})` }),
         h("dt", { text: "Size" }), h("dd", { text: `${ws.resource_profile}: ${ws.limits.cpu_millis / 1000} CPU, ${ws.limits.memory_mb} MB RAM, ${ws.limits.pids} processes, ${ws.limits.storage_mb} MB storage (reporting limit)` }),
         h("dt", { text: "Data" }), h("dd", { text: ws.persistence }),
-        h("dt", { text: "Network" }), h("dd", { text: ws.network_policy }),
+        h("dt", { text: "Network" }), h("dd", { text: ws.egress ? `${ws.network_policy} - ${ws.egress === "tor" ? "routed through Tor" : "direct (real IP)"}` : ws.network_policy }),
         h("dt", { text: "Idle timeout" }), h("dd", { text: ws.idle_timeout_minutes ? `${ws.idle_timeout_minutes} min` : "never" }),
         h("dt", { text: "Created" }), h("dd", { text: fmtTime(ws.created_at) }),
         h("dt", { text: "Last activity" }), h("dd", { text: ago(ws.last_activity_at) }),

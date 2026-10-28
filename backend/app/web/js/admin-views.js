@@ -102,13 +102,16 @@ async function templatesTab() {
       let payload; try { payload = JSON.parse(v.json); } catch { toast("That is not valid JSON.", "error"); return; }
       if (await act("Add failed", () => api("POST", "/templates", { json: payload }))) { toast("Template added", "ok"); reload(); }
     } })),
+    h("div", { class: "card row between" },
+      h("div", {}, h("strong", { text: "Tor gateway" }), h("div", { class: "muted", text: "Shared helper image: every workspace with \"Through Tor\" networking routes through one of these. Install it once; it is not a template." })),
+      h("button", { text: "Install / rebuild Tor gateway image", onclick: async () => { await installImageDialog({ id: "tor-gateway", name: "Tor gateway", buildPath: "/images/tor-gateway/build" }); } })),
     h("div", { class: "card tablewrap" }, h("table", {},
       h("thead", {}, h("tr", {}, ...["Template", "Access", "Availability on this host", ""].map((t) => h("th", { text: t })))),
       h("tbody", {}, templates.items.map((t) => h("tr", {},
         h("td", {}, h("strong", { text: t.name }), h("div", { class: "muted", text: t.id })),
         h("td", { text: t.access }),
         h("td", {}, t.availability.creatable ? h("span", { text: `Available (${t.availability.isolation === "container" ? "container" : "no isolation"})` }) : h("span", { class: "muted", text: t.availability.reason || "Unavailable" })),
-        h("td", { class: "row" }, t.builtin ? [h("span", { class: "muted", text: "built-in" }), t.buildable ? h("button", { class: t.availability.creatable ? "" : "primary", text: t.availability.creatable ? "Rebuild image" : "Install image", onclick: async () => { await installImageDialog(t); reload(); } }) : null] : [
+        h("td", { class: "row" }, t.builtin ? [h("span", { class: "muted", text: "built-in" }), t.buildable ? h("button", { class: t.availability.creatable ? "" : "primary", text: t.availability.creatable ? "Rebuild image" : "Install image", onclick: async () => { await installImageDialog({ ...t, buildPath: `/templates/${t.id}/build` }); reload(); } }) : null] : [
           h("button", { text: t.enabled ? "Disable" : "Enable", onclick: async () => { if (await act("Update failed", () => api("PATCH", `/templates/${t.id}`, { json: { enabled: !t.enabled } }))) reload(); } }),
           h("button", { class: "danger", text: "Delete", onclick: async () => { if (await confirmAction({ title: `Delete ${t.name}?`, danger: true, confirmText: "Delete" }) && await act("Delete failed", () => api("DELETE", `/templates/${t.id}`))) reload(); } })]))))))); void caps;
 }

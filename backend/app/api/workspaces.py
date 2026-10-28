@@ -22,6 +22,7 @@ from app.schemas.workspaces import (
     UpdateWorkspaceRequest,
 )
 from app.services import audit
+from app.services import images as images_mod
 from app.services import policy as policy_mod
 from app.services.templates import (
     CAPABILITY_HELP,
@@ -108,6 +109,8 @@ def _template_json(request: Request, tpl: Template) -> dict[str, Any]:
     data = {k: getattr(tpl, k) for k in _TEMPLATE_PUBLIC}
     data["availability"] = avail.to_dict()
     data["buildable"] = bool(tpl.build_context)
+    if "tor" in (tpl.allowed_egress or ()):
+        data["tor_gateway_installed"] = request.app.state.workspaces.tor_gateway_present()
     if tpl.authorized_use_only:
         data["rules"] = list(LAB_RULES)
         data["rules_version"] = LAB_RULES_VERSION
@@ -153,6 +156,53 @@ async def start_image_build(request: Request) -> JSONResponse:
         ctx=request_context(request),
     )
     return JSONResponse(state, status_code=202)
+
+
+def _helper_image(request: Request) -> str:
+    name = request.path_params["image_name"]
+    if name not in images_mod.HELPER_IMAGES:
+        raise errors.AppError(errors.NOT_FOUND, "No such buildable image.", 404)
+    return name
+
+
+async def start_helper_build(request: Request) -> JSONResponse:
+    auth = authenticate(request, permission=Perm.TEMPLATES_MANAGE)
+    name = _helper_image(request)
+    state = await run_in_threadpool(request.app.state.image_builder.start, name)
+    audit.record(
+        request.app.state.db,
+        action="image.build",
+        outcome="success",
+        actor_user_id=auth.user.id,
+        target_type="image",
+        target_id=name,
+        ctx=request_context(request),
+    )
+    return JSONResponse(state, status_code=202)
+
+
+async def helper_build_status(request: Request) -> JSONResponse:
+    authenticate(request, permission=Perm.TEMPLATES_MANAGE)
+    name = _helper_image(request)
+    state = request.app.state.image_builder.status(name)
+    return JSONResponse(state or {"state": "idle", "context": name, "log": []})
+
+
+async def cancel_helper_build(request: Request) -> Response:
+    auth = authenticate(request, permission=Perm.TEMPLATES_MANAGE)
+    name = _helper_image(request)
+    if not request.app.state.image_builder.cancel(name):
+        raise errors.AppError(errors.CONFLICT, "No build is running for this image.", 409)
+    audit.record(
+        request.app.state.db,
+        action="image.build_cancel",
+        outcome="success",
+        actor_user_id=auth.user.id,
+        target_type="image",
+        target_id=name,
+        ctx=request_context(request),
+    )
+    return Response(status_code=204)
 
 
 async def image_build_status(request: Request) -> JSONResponse:
@@ -392,6 +442,9 @@ routes = [
     Route("/templates/{template_id}", get_template, methods=["GET"]),
     Route("/templates/{template_id}", update_template, methods=["PATCH"]),
     Route("/templates/{template_id}", delete_template, methods=["DELETE"]),
+    Route("/images/{image_name}/build", start_helper_build, methods=["POST"]),
+    Route("/images/{image_name}/build", helper_build_status, methods=["GET"]),
+    Route("/images/{image_name}/build", cancel_helper_build, methods=["DELETE"]),
     Route("/workspaces", list_workspaces, methods=["GET"]),
     Route("/workspaces", create_workspace, methods=["POST"]),
     Route("/workspaces/{workspace_id}", get_workspace, methods=["GET"]),

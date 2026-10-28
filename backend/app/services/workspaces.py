@@ -142,6 +142,17 @@ class WorkspaceService:
     def availability(self, template: Template) -> Availability:
         return evaluate(template, self.capabilities(), image_present=self._image_present)
 
+    def tor_gateway_present(self) -> bool | None:
+        """Cached (10 s) check that the shared Tor gateway image exists. None if it cannot be checked."""
+        now = time.monotonic()
+        cached = self._image_cache.get(TOR_GATEWAY_IMAGE)
+        if cached and now - cached[0] < 10:
+            return cached[1]
+        adapter = self.adapters().get("docker")
+        found = adapter.has_image(TOR_GATEWAY_IMAGE) if adapter else None
+        self._image_cache[TOR_GATEWAY_IMAGE] = (now, found)
+        return found
+
     def _notify_inactive(self, workspace_id: str) -> None:
         for hook in self.on_inactive:
             try:

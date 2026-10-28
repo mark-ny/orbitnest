@@ -218,5 +218,27 @@ class TemplateAndPolicyApiTests(ApiBase):
         self.assertEqual(self.admin.get("/api/v1/settings/policy").json()["max_running_per_user"], 4)
 
 
+class HelperImageBuildApiTests(ApiBase):
+    def setUp(self) -> None:
+        super().setUp()
+        from app.services.image_builder import ImageBuilder
+
+        self.app.state.image_builder = ImageBuilder(planner=lambda ctx: [["true"]])
+
+    def test_only_known_helper_images_are_buildable(self) -> None:
+        self.assertEqual(self.admin.post("/api/v1/images/tor-gateway/build").status, 202)
+        self.assertEqual(self.admin.post("/api/v1/images/not-a-real-image/build").status, 404)
+        self.assertEqual(self.alice.post("/api/v1/images/tor-gateway/build").status, 403)
+
+    def test_status_and_cancel_round_trip(self) -> None:
+        self.assertEqual(self.admin.get("/api/v1/images/tor-gateway/build").json()["state"], "idle")
+        self.admin.post("/api/v1/images/tor-gateway/build")
+        for _ in range(50):
+            if self.admin.get("/api/v1/images/tor-gateway/build").json()["state"] != "running":
+                break
+        r = self.admin.delete("/api/v1/images/tor-gateway/build")
+        self.assertIn(r.status, (204, 409))  # 409 if the (instant) fake build already finished
+
+
 if __name__ == "__main__":
     unittest.main()

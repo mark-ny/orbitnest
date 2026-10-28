@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { errorBox, loadCaps, page, state } from "./core.js";
+import { installImageDialog } from "./images.js";
 import { ago, clear, confirmAction, dialog, fmtTime, h, pill, toast } from "./ui.js";
 
 const TABS = [["users", "Users"], ["policy", "Limits"], ["templates", "Templates"], ["audit", "Audit log"], ["system", "System"]];
@@ -107,7 +108,7 @@ async function templatesTab() {
         h("td", {}, h("strong", { text: t.name }), h("div", { class: "muted", text: t.id })),
         h("td", { text: t.access }),
         h("td", {}, t.availability.creatable ? h("span", { text: `Available (${t.availability.isolation === "container" ? "container" : "no isolation"})` }) : h("span", { class: "muted", text: t.availability.reason || "Unavailable" })),
-        h("td", { class: "row" }, t.builtin ? h("span", { class: "muted", text: "built-in" }) : [
+        h("td", { class: "row" }, t.builtin ? [h("span", { class: "muted", text: "built-in" }), t.buildable ? h("button", { class: t.availability.creatable ? "" : "primary", text: t.availability.creatable ? "Rebuild image" : "Install image", onclick: async () => { await installImageDialog(t); reload(); } }) : null] : [
           h("button", { text: t.enabled ? "Disable" : "Enable", onclick: async () => { if (await act("Update failed", () => api("PATCH", `/templates/${t.id}`, { json: { enabled: !t.enabled } }))) reload(); } }),
           h("button", { class: "danger", text: "Delete", onclick: async () => { if (await confirmAction({ title: `Delete ${t.name}?`, danger: true, confirmText: "Delete" }) && await act("Delete failed", () => api("DELETE", `/templates/${t.id}`))) reload(); } })]))))))); void caps;
 }

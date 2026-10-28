@@ -68,6 +68,10 @@ export function screenTab(ws, pane, tpl) {
     }
     rfb.scaleViewport = fit;
     rfb.resizeSession = false;
+    // Lower server-side compression effort: the server's CPU is the scarce resource, not the link.
+    const local = ["127.0.0.1", "localhost", "[::1]"].includes(location.hostname);
+    rfb.compressionLevel = local ? 0 : 2;
+    rfb.qualityLevel = local ? 6 : 5;
     rfb.background = "#03050a";
     rfb.addEventListener("connect", () => { connecting = false; overlay.hidden = true; status.textContent = "Connected"; rfb.focus(); });
     rfb.addEventListener("disconnect", (ev) => {
@@ -105,8 +109,10 @@ export function screenTab(ws, pane, tpl) {
   state.onLeave = () => { disconnect(); if (document.fullscreenElement) document.exitFullscreen(); };
 
   const notes = [];
-  if (tpl?.id === "browser-tor") {
-    notes.push(h("div", { class: "banner" }, icon("onion"), h("div", {}, h("strong", { text: "Tor Browser. " }), "Browsing from this window goes through the Tor network. Only the browser is anonymised: your OrbitNest login, the files you upload and anything you sign in to are not.")));
+  if (tpl?.privacy === "tor") {
+    notes.push(h("div", { class: "banner" }, icon("onion"), h("div", {}, h("strong", { text: "Tor Browser. " }), "Web traffic from this window goes through the Tor network. Check it: open check.torproject.org in this browser and look for \"Congratulations\". Not Tails: your OrbitNest login, files you upload and accounts you sign in to are not anonymous.")));
+  } else if (tpl?.privacy === "direct") {
+    notes.push(h("div", { class: "banner warn" }, icon("shield"), h("div", {}, h("strong", { text: "Not anonymous. " }), "Sites see this computer's real IP address and internet provider. For privacy, create a Tor Browser workspace instead.")));
   }
   say("Ready", "", null);
   if (live()) connect(); else say("Workspace is not running", "Start it, then the screen opens here.", null);

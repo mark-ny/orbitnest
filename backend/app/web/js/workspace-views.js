@@ -2,6 +2,7 @@ import { api, filesUrl } from "./api.js";
 import { canWrite, errorBox, loadCaps, modeBanner, navigate, page, poll, state } from "./core.js";
 import { Terminal } from "./terminal.js";
 import { screenTab } from "./stream.js";
+import { installImageDialog } from "./images.js";
 import { add, ago, btn, busy, clear, confirmAction, dialog, fmtBytes, fmtTime, h, icon, pill, toast } from "./ui.js";
 
 const TRANSITIONAL = new Set(["provisioning", "starting", "stopping", "deleting"]);
@@ -83,33 +84,128 @@ export async function workspacesView() {
   poll(refresh, 4000);
 }
 
+const RANK = { small: 0, medium: 1, large: 2 };
+
+function privacyTag(t) {
+  if (t.privacy === "tor") return h("span", { class: "tag tor", text: "Routed through Tor" });
+  if (t.privacy === "direct") return h("span", { class: "tag direct", text: "Uses your real IP" });
+  return null;
+}
+
 async function createDialog(templates) {
-  let chosen = templates.find((t) => t.availability.creatable)?.id || templates[0]?.id;
+  let list = templates;
+  const isAdmin = state.user?.role === "admin";
+  let chosen = list.find((t) => t.availability.creatable)?.id || list[0]?.id;
+  const current = () => list.find((t) => t.id === chosen);
   const cards = [];
-  const node = h("div", { class: "tplgrid", role: "radiogroup", "aria-label": "Template" }, templates.map((t) => {
-    const ok = t.availability.creatable;
-    const c = h("button", { type: "button", class: "tplcard", role: "radio", "aria-checked": String(t.id === chosen), "aria-disabled": String(!ok), title: ok ? "" : t.availability.reason || "Unavailable",
-      onclick: () => { if (!ok) { toast(t.availability.reason || "Unavailable", "error"); return; } chosen = t.id; for (const x of cards) x.setAttribute("aria-checked", String(x === c)); } },
-      tplIcon(t), h("span", {}, h("span", { class: "t", text: t.name }), h("span", { class: "d", text: ok ? t.description : `Unavailable: ${(t.availability.reason || "").slice(0, 90)}` })));
-    cards.push(c);
-    return c;
-  }));
+  const grid = h("div", { class: "tplgrid", role: "radiogroup", "aria-label": "Template" });
+  const detail = h("div", { class: "tpldetail" });
+  const sizeSel = h("select", { id: "f-size" });
+  const sizeWarn = h("div", { class: "banner warn", hidden: true });
+  const rulesBox = h("input", { type: "checkbox", id: "f-rules" });
+  const capBoxes = new Map();
+
+  const paintDetail = () => {
+    const t = current();
+    clear(detail);
+    capBoxes.clear();
+    rulesBox.checked = false;
+    if (!t) return;
+    clear(sizeSel);
+    for (const [k, d] of Object.entries(PROFILE_HELP)) {
+      sizeSel.append(h("option", { value: k, text: `${k} - ${d}`, disabled: !!t.min_profile && RANK[k] < RANK[t.min_profile] }));
+    }
+    sizeSel.value = t.default_profile;
+    const checkSize = () => {
+      const low = t.recommended_profile && RANK[sizeSel.value] < RANK[t.recommended_profile];
+      sizeWarn.hidden = !low;
+      sizeWarn.textContent = low ? `This may feel slow. ${t.name} runs best at "${t.recommended_profile}" (${PROFILE_HELP[t.recommended_profile]}) or above.` : "";
+    };
+    sizeSel.onchange = checkSize;
+    checkSize();
+    add(detail, h("div", { class: "field" }, h("label", { for: "f-size", text: "Size" }), sizeSel), sizeWarn);
+    if (t.privacy === "direct") {
+      add(detail, h("div", { class: "banner warn" }, icon("shield"), h("div", {}, h("strong", { text: "Not anonymous. " }), "Sites you visit here see this computer's real IP address and internet provider, exactly as in a normal browser. This only separates the browser from your files. For privacy choose Tor Browser.")));
+    } else if (t.privacy === "tor") {
+      add(detail, h("div", { class: "banner" }, icon("onion"), h("div", {}, h("strong", { text: "Tor Browser. " }), "Web traffic goes through Tor, so sites see a Tor exit instead of your IP. Data is erased when the workspace stops. This is not Tails: your internet provider can see that you use Tor, and accounts you sign in to identify you.")));
+    }
+    if (t.authorized_use_only) {
+      add(detail, h("div", { class: "card stack" },
+        h("strong", { text: "Authorized security testing only" }),
+        h("ol", { class: "rules" }, (t.rules || []).map((r) => h("li", { text: r }))),
+        h("label", { class: "capopt", for: "f-rules" }, rulesBox, h("span", { text: "I have read and accept these rules." })),
+        (t.optional_capabilities || []).length ? h("div", { class: "stack" },
+          h("strong", { text: "Extra Linux capabilities (optional)" }),
+          h("small", { class: "muted", text: "Tick only what you need. Privileged mode, host networking and device access are never available." }),
+          t.optional_capabilities.map((c) => {
+            const box = h("input", { type: "checkbox", id: `cap-${c}` });
+            capBoxes.set(c, box);
+            return h("label", { class: "capopt", for: `cap-${c}` }, box, h("span", {}, h("code", { text: c }), h("small", { text: t.capability_help?.[c] || "" })));
+          })) : null));
+    }
+  };
+
+  const drawGrid = () => {
+    clear(grid);
+    cards.length = 0;
+    for (const t of list) {
+      const ok = t.availability.creatable;
+      const needsBuild = !ok && t.buildable && /not built/i.test(t.availability.reason || "");
+      const c = h("button", { type: "button", class: "tplcard", role: "radio", "aria-checked": String(t.id === chosen), "aria-disabled": String(!ok), title: ok ? "" : t.availability.reason || "Unavailable",
+        onclick: async () => {
+          if (!ok) {
+            if (needsBuild && isAdmin) { if (await installImageDialog(t)) { await reloadTemplates(); } else { await reloadTemplates(); } return; }
+            toast(needsBuild ? "This image is not installed yet. Ask an administrator to install it (Admin, Templates)." : t.availability.reason || "Unavailable", "error");
+            return;
+          }
+          chosen = t.id;
+          for (const x of cards) x.setAttribute("aria-checked", String(x === c));
+          paintDetail();
+        } },
+        tplIcon(t), h("span", {}, h("span", { class: "t", text: t.name }),
+          h("span", { class: "d", text: ok ? t.description : (needsBuild ? (isAdmin ? "Image not installed. Click to install it." : "Image not installed. Ask an administrator.") : `Unavailable: ${(t.availability.reason || "").slice(0, 90)}`) }),
+          ok ? h("span", { class: "tags" }, privacyTag(t), t.authorized_use_only ? h("span", { class: "tag lab", text: "Authorized use" }) : null) : null));
+      cards.push(c);
+      grid.append(c);
+    }
+  };
+  const reloadTemplates = async () => {
+    list = (await api("GET", "/templates")).items;
+    if (!current()?.availability.creatable) chosen = list.find((t) => t.availability.creatable)?.id || list[0]?.id;
+    drawGrid();
+    paintDetail();
+  };
+  drawGrid();
+  paintDetail();
+  const node = h("div", {}, grid, detail);
+
   const v = await dialog({
     title: "New workspace", confirmText: "Create", wide: true,
-    extra: { node, read: () => ({ template_id: chosen }) },
+    extra: {
+      node,
+      validate: () => {
+        const t = current();
+        if (!t) return "Choose a template.";
+        if (t.authorized_use_only && !rulesBox.checked) return "Accept the lab rules to continue.";
+        return "";
+      },
+      read: () => ({
+        template_id: chosen, profile: sizeSel.value, rules: rulesBox.checked,
+        capabilities: [...capBoxes].filter(([, b]) => b.checked).map(([c]) => c),
+      }),
+    },
     fields: [
       { name: "name", label: "Name", maxlength: 64, required: true, hint: "Letters, digits, spaces, . _ -" },
-      { name: "profile", label: "Size", type: "select", value: "small", options: Object.entries(PROFILE_HELP).map(([k, d]) => ({ value: k, label: `${k} - ${d}` })) },
       { name: "persistence", label: "Data", type: "select", value: "", options: [{ value: "", label: "Template default" }, { value: "persistent", label: "Persistent (kept when deleted unless you choose otherwise)" }, { value: "disposable", label: "Disposable (erased on stop)" }] },
       { name: "idle", label: "Stop after idle (minutes)", type: "number", value: "", hint: "Empty = template default, 0 = never." },
-      { name: "ack", label: "I am authorized to use security-testing profiles (only needed for those)", type: "checkbox" },
     ],
   });
   if (!v) return;
   const body = { template_id: v.template_id, name: v.name.trim(), profile: v.profile };
   if (v.persistence) body.persistence = v.persistence;
   if (v.idle !== "") body.idle_timeout_minutes = Number(v.idle);
-  if (v.ack) body.acknowledge_authorized_use = true;
+  if (v.rules) body.acknowledge_authorized_use = true;
+  if (v.capabilities.length) body.capabilities = v.capabilities;
   const created = await run("Create failed", () => api("POST", "/workspaces", { json: body }));
   if (created && created !== true) navigate(`#/w/${created.id}`);
 }

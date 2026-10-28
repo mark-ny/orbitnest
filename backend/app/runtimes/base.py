@@ -52,6 +52,7 @@ class RuntimeSpec:
     max_file_mb: int = 2048
     shm_mb: int = 64
     stream_port: int | None = None
+    run_as_root: bool = False
     labels: dict[str, str] = field(default_factory=dict)
 
     def validate(self) -> None:

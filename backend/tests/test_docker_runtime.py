@@ -178,6 +178,24 @@ class ArgvTests(unittest.TestCase):
         a = self.build(capabilities=("NET_BIND_SERVICE",))
         self.assertEqual(a[a.index("--cap-add") + 1], "NET_BIND_SERVICE")
 
+    def test_lab_root_still_unprivileged_with_explicit_caps_only(self) -> None:
+        a = self.build(run_as_root=True, capabilities=("NET_RAW",))
+        self.assertEqual(a[a.index("--user") + 1], "0:0")
+        added = [a[i + 1] for i, x in enumerate(a) if x == "--cap-add"]
+        self.assertIn("NET_RAW", added)
+        self.assertIn("SETUID", added)
+        for never in ("SYS_ADMIN", "SYS_MODULE", "SYS_RAWIO", "MKNOD", "SETFCAP", "NET_ADMIN", "ALL"):
+            self.assertNotIn(never, added)
+        self.assertEqual(a[a.index("--cap-drop") + 1], "ALL")
+        self.assertIn("no-new-privileges:true", a)
+        self.assertIn("HOME=/root", a)
+        self.assertFalse(FORBIDDEN_FLAGS & set(a))
+        self.assertNotIn("--privileged", a)
+
+    def test_root_is_never_the_default(self) -> None:
+        a = self.build()
+        self.assertNotEqual(a[a.index("--user") + 1].split(":")[0], "0")
+
     def test_image_then_command_are_last_and_options_come_first(self) -> None:
         a = self.build()
         self.assertEqual(a[-3:], ["python:3.12-slim", "sleep", "infinity"])

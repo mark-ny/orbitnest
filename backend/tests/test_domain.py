@@ -138,11 +138,29 @@ class TemplateTests(unittest.TestCase):
                 self.assertFalse(t.image.startswith("-"))
                 self.assertIn(t.matrix_key, matrix.MATRIX)
 
+    def test_custom_templates_cannot_take_lab_privileges(self) -> None:
+        from app.services.templates import TemplateError, validate_custom_definition
+
+        base = {"id": "custom-x", "name": "x", "description": "d", "image": "alpine:3"}
+        for extra in (
+            {"capabilities": ["NET_RAW"]},
+            {"capabilities": ["SYS_ADMIN"]},
+            {"optional_capabilities": ["NET_RAW"], "authorized_use_only": True},
+            {"run_as_root": True, "authorized_use_only": True},
+            {"privacy": "tor"},
+        ):
+            with self.subTest(extra=extra), self.assertRaises(TemplateError):
+                validate_custom_definition({**base, **extra})
+        self.assertEqual(
+            validate_custom_definition({**base, "capabilities": ["NET_BIND_SERVICE"]}).id, "custom-x"
+        )
+
     def test_security_templates_flagged_authorized_use(self) -> None:
         by_id = {t.id: t for t in BUILTIN_TEMPLATES}
         self.assertTrue(by_id["security-lab"].authorized_use_only)
         self.assertTrue(by_id["desktop-kali"].authorized_use_only)
-        self.assertFalse(by_id["desktop-kali"].enabled)
+        self.assertTrue(by_id["desktop-kali"].enabled)
+        self.assertTrue(by_id["security-lab"].optional_capabilities)
 
     def base(self, **kw):
         d = {
@@ -246,7 +264,10 @@ class EvaluateTests(unittest.TestCase):
         self.assertTrue(evaluate(self.by_id["dev-python"], c, image_present=lambda _t: False).creatable)
 
     def test_disabled_builtin(self) -> None:
-        a = evaluate(self.by_id["desktop-kali"], caps({}))
+        off = self.by_id["desktop-kali"].model_copy(
+            update={"enabled": False, "disabled_reason": "Kali is off"}
+        )
+        a = evaluate(off, caps({}))
         self.assertFalse(a.creatable)
         self.assertIn("Kali", a.reason)
 

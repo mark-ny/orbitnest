@@ -36,6 +36,7 @@ from app.db import Database, migrate
 from app.runtimes.base import RuntimeAdapter
 from app.runtimes.factory import build_runtimes
 from app.services.files import FileService
+from app.services.image_builder import ImageBuilder
 from app.services.jobs import JobRunner, ThreadRunner
 from app.services.maintenance import MaintenanceThread
 from app.services.streams import StreamService
@@ -156,6 +157,12 @@ def create_app(
         runner=job_runner or ThreadRunner(),
         capabilities=detector,
     )
+
+    def _docker_bin() -> str:
+        adapter = workspace_service.adapters().get("docker")
+        return getattr(adapter, "docker_bin", "docker")
+
+    image_builder = ImageBuilder(docker_bin=_docker_bin, on_finished=workspace_service._image_cache.clear)
     terminals = TerminalService(workspace_service, settings)
     streams = StreamService(workspace_service, settings)
     maintenance = MaintenanceThread(workspace_service, settings.maintenance_interval_seconds)
@@ -190,6 +197,7 @@ def create_app(
     app.state.maintenance = maintenance
     app.state.terminals = terminals
     app.state.streams = streams
+    app.state.image_builder = image_builder
     return app
 
 

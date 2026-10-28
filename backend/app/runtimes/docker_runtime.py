@@ -33,6 +33,10 @@ LABEL_WORKSPACE = "orbitnest.workspace"
 
 # Viewer assets (the noVNC client) live at a fixed, root-owned path inside the image.
 ASSET_ROOT = "/usr/share/novnc"
+ROOT_BASE_CAPS = (
+    "CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "SETGID", "SETUID", "SETPCAP",
+    "NET_BIND_SERVICE", "SYS_CHROOT", "AUDIT_WRITE",
+)  # fmt: skip
 ASSET_PATH_RE = re.compile(r"^(core|vendor)/[A-Za-z0-9._/-]{1,150}\.js\Z")
 
 CommandRunner = Callable[[Sequence[str], float], CommandResult]
@@ -148,11 +152,14 @@ class DockerRuntime(RuntimeAdapter):
             f"{LABEL_WORKSPACE}={spec.workspace_id}",
             "--init",
             "--user",
-            self.user or container_user(),
+            "0:0" if spec.run_as_root else (self.user or container_user()),
             "--cap-drop",
             "ALL",
         ]
-        for cap in spec.capabilities:
+        # Root inside the container needs a few basics to be usable (apt, chown, su). This is Docker's own
+        # default set minus MKNOD, NET_RAW and SETFCAP; NET_RAW etc. come only from the user's choices.
+        caps = tuple(dict.fromkeys((*(ROOT_BASE_CAPS if spec.run_as_root else ()), *spec.capabilities)))
+        for cap in caps:
             argv += ["--cap-add", cap]
         argv += [
             "--security-opt",
@@ -180,7 +187,7 @@ class DockerRuntime(RuntimeAdapter):
             "--workdir",
             spec.mount_path,
             "--env",
-            f"HOME={spec.mount_path}",
+            "HOME=/root" if spec.run_as_root else f"HOME={spec.mount_path}",
             "--restart",
             "no",
             "--stop-timeout",

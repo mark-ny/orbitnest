@@ -5,7 +5,14 @@
 set -eu
 
 export DISPLAY=:0
+# Optional per-workspace tuning that survives restarts (lives in the workspace's own data folder):
+#   /home/workspace/.orbitnest/session.env  with lines such as  ORBITNEST_RESOLUTION=1024x600x16
+#                                                            or  ORBITNEST_VNC_ARGS="-wait 40 -defer 40"
+if [ -r /home/workspace/.orbitnest/session.env ]; then . /home/workspace/.orbitnest/session.env; fi
 RES="${ORBITNEST_RESOLUTION:-1280x720x24}"
+# -nap/-wait/-defer: poll the screen less often. This trades a few ms of latency for much less CPU,
+# which is what limits small and medium workspaces.
+VNC_ARGS="${ORBITNEST_VNC_ARGS:--nap -wait 25 -defer 25}"
 mkdir -p "${HOME:-/home/workspace}" 2>/dev/null || true
 
 Xvfb :0 -screen 0 "$RES" -nolisten tcp >/dev/null 2>&1 &
@@ -20,7 +27,8 @@ if [ "${ORBITNEST_WM:-openbox}" != "none" ]; then
   openbox >/dev/null 2>&1 &
 fi
 
-x11vnc -display :0 -localhost -rfbport 5900 -forever -shared -nopw -noxdamage -quiet \
+# shellcheck disable=SC2086  # VNC_ARGS is deliberately word-split
+x11vnc -display :0 -localhost -rfbport 5900 -forever -shared -nopw -noxdamage -quiet $VNC_ARGS \
   >/dev/null 2>&1 &
 
 trap 'exit 0' TERM INT

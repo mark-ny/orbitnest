@@ -7,7 +7,9 @@ import unittest
 from app.core import errors
 from app.runtimes.base import RuntimeSpec
 from app.services import policy as policy_mod
+from app.services.audit import list_events
 from app.services.jobs import ManualRunner
+from app.services.templates import LAB_RULES_VERSION
 from tests.helpers import ServiceHarness, make_caps
 from tests.runtime_helpers import WSID
 
@@ -219,6 +221,48 @@ class ValidationTests(ServiceHarness):
         self.assertEqual(code_of(lambda: self.make_ws(template="security-lab"))[0], "confirmation_required")
         ws = self.make_ws(template="security-lab", acknowledge_authorized_use=True)
         self.assertEqual(self.status(ws), "running")
+
+    def test_lab_capabilities_need_rules_and_come_from_the_offered_list(self) -> None:
+        caps = ["NET_RAW", "NET_ADMIN"]
+        # Rules not accepted: refused, whatever capabilities were asked for.
+        self.assertEqual(
+            code_of(lambda: self.make_ws(template="security-lab", capabilities=caps))[0],
+            "confirmation_required",
+        )
+        # Capabilities outside the allowlist or not offered by this template are refused.
+        for bad in (["SYS_ADMIN"], ["ALL"], ["NET_RAW", "SYS_MODULE"], ["net_raw"]):
+            self.assertEqual(
+                code_of(
+                    lambda bad=bad: self.make_ws(
+                        template="security-lab", acknowledge_authorized_use=True, capabilities=bad
+                    )
+                )[1],
+                422,
+                bad,
+            )
+        # A template that offers none refuses them even when the box is ticked.
+        self.assertEqual(
+            code_of(lambda: self.make_ws(template="dev-python", capabilities=["NET_RAW"]))[1], 422
+        )
+        ws = self.make_ws(template="security-lab", acknowledge_authorized_use=True, capabilities=caps)
+        self.assertEqual(ws.extra_caps, ("NET_RAW", "NET_ADMIN"))
+        inst = self.store.current_instance(ws.id)
+        spec = self.fake.resources[inst.resource_id].spec
+        self.assertEqual(set(spec.capabilities), {"NET_RAW", "NET_ADMIN"})
+        self.assertTrue(spec.run_as_root)
+        events, _ = list_events(self.db, limit=50, action_prefix="workspace.")
+        created = [e for e in events if e["action"].endswith("create") and e["outcome"] == "success"]
+        details = str(created[0].get("details"))
+        self.assertIn(LAB_RULES_VERSION, details)
+        self.assertIn("NET_RAW", details)
+
+    def test_browsers_refuse_sizes_that_cannot_run_them(self) -> None:
+        self.assertEqual(code_of(lambda: self.make_ws(template="browser-chromium", profile="small"))[1], 422)
+        ws = self.make_ws(template="browser-chromium", profile="medium")
+        self.assertEqual(ws.resource_profile, "medium")
+        self.assertEqual(
+            self.make_ws(name="dev two", template="dev-python", profile="small").resource_profile, "small"
+        )
 
     def test_read_only_cannot_create(self) -> None:
         ro = self.add_user("viewer", "read_only")

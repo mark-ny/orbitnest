@@ -176,3 +176,37 @@ login path (timing equalisation is coded, not measured).
 - Admin one-click "Install image" (build with live log, cancel, one at a time). Tested with a fake planner, not a real `docker build`.
 - Performance: stream templates need at least "medium"; Chromium/Firefox launch with lighter flags and 16-bit colour, x11vnc polls less, noVNC uses lower compression. These are untested guesses at what helps; 1 GB cannot make Chromium feel like 2 GB. Per-workspace override file: `.orbitnest/session.env` in the workspace folder.
 - 428 Python tests pass, ruff clean.
+
+## 2026-10-29 session: Tor-routed egress, launcher, lab toolsets, UI wiring
+
+Everything below is also unverified against a real Docker daemon (still none in this sandbox);
+all of it is covered by unit tests against a scripted Docker CLI (`tests/test_docker_runtime.py`,
+`tests/test_workspaces.py`, `tests/test_workspace_api.py`) and passes ruff and the full suite
+(440 tests at last check in this sandbox).
+
+- **Tor gateway egress** (`app/runtimes/docker_runtime.py`, `docker/tor-gateway/`): a per-workspace
+  gateway container, created and health-checked before the workspace, that the workspace joins via
+  `--network container:<gateway>` with all capabilities dropped. Fails closed: an unhealthy or
+  missing gateway means the workspace is never created. See THREAT_MODEL.md T22.
+- Chromium/Firefox/desktop-ubuntu/desktop-kali/security-lab default to Tor egress; Tor Browser
+  stays direct-only (its own Tor). `egress` is now a per-workspace, user-selectable field where the
+  template allows it, persisted in migration `0006_workspace_egress.sql`.
+- `scripts/orbitnest`: a one-word launcher (`start|stop|restart|status|logs|update|run`, plus any
+  admin subcommand) installed onto `PATH` by all three installers. `update` does
+  `git fetch && git pull --ff-only`, reinstalls dependencies, migrates, and restarts if running; a
+  failed update is retried automatically on the next call via a marker file.
+- Security Lab and the Kali desktop image now install OSINT, defensive and (authorized) red-team
+  tooling with per-package tolerant installs (`for p in ...; do apt-get install -y $p || echo
+  skipped; done`), so one missing package in a given Kali snapshot doesn't fail the whole build.
+  Package names are listed in the Dockerfiles, not here.
+- Chromium/Firefox get managed privacy policies baked into the image (WebRTC non-proxied UDP
+  disabled, telemetry/sync/geolocation/safe-browsing off, Firefox resist-fingerprinting on) as
+  defense in depth on top of the Tor gateway's firewall.
+- Generic helper-image build routes (`/images/{name}/build`) so the Tor gateway can be built from
+  **Admin → Templates** the same way a template image can, without being a template itself.
+- Create-workspace dialog: a Network selector (Through Tor / Direct) on templates that offer a
+  choice, a warning if the Tor gateway image isn't built yet, and banners on the template grid,
+  the create dialog, the workspace Overview tab and the Screen tab that reflect the *actual*
+  per-workspace egress rather than a static per-template label.
+- `docs/INSTALL.md` rewritten for detail-over-code-blocks per request, including a "Staying
+  anonymous" section stating plainly what the Tor gateway does and does not provide.

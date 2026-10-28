@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# OrbitNest launcher: one command to start, stop, restart, check and update the server.
+# Works the same on Linux, Windows (inside WSL) and Termux. No systemd needed.
+#   orbitnest start | stop | restart | status | logs | update | run
+# Any other word is passed to the admin CLI (for example: orbitnest create-admin alice).
+set -euo pipefail
+
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+REPO_DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
+CANDIDATES=("${ORBITNEST_ENV_FILE:-}" "${XDG_CONFIG_HOME:-$HOME/.config}/orbitnest/orbitnest.env" "$HOME/.orbitnest/orbitnest.env")
+ENV_FILE=""
+for c in "${CANDIDATES[@]}"; do [ -n "$c" ] && [ -f "$c" ] && ENV_FILE="$c" && break; done
+[ -n "$ENV_FILE" ] || { echo "orbitnest: no config found. Run the installer in $REPO_DIR/scripts first." >&2; exit 1; }
+
+set -a; . "$ENV_FILE"; set +a
+DATA_DIR="${ORBITNEST_DATA_DIR:-$(dirname "$ENV_FILE")}"
+VENV="${ORBITNEST_VENV:-$DATA_DIR/venv}"
+PY="$VENV/bin/python"
+PIDFILE="$DATA_DIR/orbitnest.pid"
+LOGFILE="$DATA_DIR/orbitnest.log"
+URL="http://${ORBITNEST_HOST:-127.0.0.1}:${ORBITNEST_PORT:-8765}"
+[ -x "$PY" ] || { echo "orbitnest: Python environment missing at $VENV. Re-run the installer." >&2; exit 1; }
+mkdir -p "$DATA_DIR"
+
+say() { printf '%s\n' "$*"; }
+running() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
+admin() { (cd "$REPO_DIR/backend" && "$PY" -m app "$@"); }
+
+do_start() {
+  if running; then say "Already running (pid $(cat "$PIDFILE")) at $URL"; return 0; fi
+  admin migrate >/dev/null
+  (cd "$REPO_DIR/backend" && nohup "$PY" -m app serve >>"$LOGFILE" 2>&1 & echo $! >"$PIDFILE")
+  chmod 600 "$LOGFILE" "$PIDFILE" 2>/dev/null || true
+  for _ in $(seq 1 30); do
+    running || { say "Server exited. Last log lines:"; tail -n 15 "$LOGFILE"; rm -f "$PIDFILE"; return 1; }
+    if "$PY" - "$URL/api/v1/health" <<'PYEOF' 2>/dev/null; then say "Started: $URL"; return 0; fi
+import sys, urllib.request
+urllib.request.urlopen(sys.argv[1], timeout=1)
+PYEOF
+    sleep 1
+  done
+  say "Started (pid $(cat "$PIDFILE")) but not answering yet. Check: orbitnest logs"
+}
+
+do_stop() {
+  if ! running; then say "Not running."; rm -f "$PIDFILE"; return 0; fi
+  pid="$(cat "$PIDFILE")"; kill "$pid"
+  for _ in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done
+  kill -0 "$pid" 2>/dev/null && kill -9 "$pid" || true
+  rm -f "$PIDFILE"; say "Stopped."
+}
+
+do_update() {
+  [ -d "$REPO_DIR/.git" ] || { say "orbitnest: $REPO_DIR is not a git checkout, cannot update." >&2; exit 1; }
+  if [ -n "$(git -C "$REPO_DIR" status --porcelain --untracked-files=no)" ]; then
+    say "You have local changes in $REPO_DIR. Commit or stash them first (git status)." >&2; exit 1
+  fi
+  before="$(git -C "$REPO_DIR" rev-parse --short HEAD)"
+  say "Fetching updates from GitHub..."
+  git -C "$REPO_DIR" fetch --quiet
+  git -C "$REPO_DIR" pull --ff-only --quiet || { say "Cannot fast-forward. Your copy has diverged from GitHub." >&2; exit 1; }
+  after="$(git -C "$REPO_DIR" rev-parse --short HEAD)"
+  PENDING="$DATA_DIR/.update-pending"
+  if [ "$before" = "$after" ] && [ ! -f "$PENDING" ]; then say "Already up to date ($after)."; return 0; fi
+  touch "$PENDING"   # stays until every step below succeeds, so a failed update is retried next time
+  say "Updated $before -> $after. Installing dependencies..."
+  "$PY" -m pip install --quiet -r "$REPO_DIR/backend/requirements.txt"
+  admin migrate
+  if running; then say "Restarting..."; do_stop; do_start; else say "Server was not running; start it with: orbitnest start"; fi
+  rm -f "$PENDING"
+  say "Done. If images changed, rebuild them from Admin > Templates."
+}
+
+case "${1:-help}" in
+  start) do_start ;;
+  stop) do_stop ;;
+  restart) do_stop; do_start ;;
+  status) if running; then say "Running (pid $(cat "$PIDFILE")) at $URL"; else say "Stopped."; fi ;;
+  logs) tail -n "${2:-50}" -f "$LOGFILE" ;;
+  update) do_update ;;
+  run) cd "$REPO_DIR/backend" && exec "$PY" -m app serve ;;
+  help|-h|--help) sed -n '2,5p' "$SELF" | sed 's/^# \{0,1\}//' ;;
+  *) admin "$@" ;;
+esac

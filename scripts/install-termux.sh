@@ -57,14 +57,18 @@ say ""
 say "Capability report (what this device can honestly do):"
 "$VENV/bin/python" -m app capabilities | head -40
 
+# One-word launcher: orbitnest start | stop | status | update
+BIN_DIR="${PREFIX:-$HOME/.local}/bin"
+mkdir -p "$BIN_DIR"
+ln -sf "$REPO_DIR/scripts/orbitnest" "$BIN_DIR/orbitnest"
+
 cat <<NEXT
 
 Next steps:
-  1. Create the administrator:
-       cd "$REPO_DIR/backend" && set -a && . "$ENV_FILE" && set +a
-       "$VENV/bin/python" -m app create-admin <username>
-  2. Start (keeps running while the Termux session is alive; use termux-wake-lock to keep it awake):
-       "$VENV/bin/python" -m app serve
+  1. Create the administrator:   orbitnest create-admin <username>
+  2. Start the server:           orbitnest start
   3. Open http://127.0.0.1:8765 in the phone's browser.
-Android may kill background processes; see docs/TERMUX.md.
+  Later, to get new versions from GitHub:   orbitnest update
+  Other commands: orbitnest stop | restart | status | logs
+Run termux-wake-lock so Android is less likely to stop it. See docs/TERMUX.md.
 NEXT

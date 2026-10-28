@@ -71,6 +71,7 @@ class _Res:
 class FakeRuntime(RuntimeAdapter):
     name: str = "fake"
     isolation: str = "container"
+    supports_tor: bool = True
     resources: dict[str, _Res] = field(default_factory=dict)
     calls: list[tuple[str, str]] = field(default_factory=list)
     # operation -> number of upcoming calls that should fail
@@ -101,6 +102,8 @@ class FakeRuntime(RuntimeAdapter):
     def create(self, spec: RuntimeSpec) -> str:
         spec.validate()
         self._enter("create", "-")
+        if spec.egress == "tor":
+            self._enter("gateway", spec.workspace_id)
         rid = f"fake-{next(self._ids):04d}"
         self.resources[rid] = _Res(spec)
         return rid

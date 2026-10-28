@@ -111,8 +111,10 @@ export function screenTab(ws, pane, tpl) {
   const notes = [];
   if (tpl?.privacy === "tor") {
     notes.push(h("div", { class: "banner" }, icon("onion"), h("div", {}, h("strong", { text: "Tor Browser. " }), "Web traffic from this window goes through the Tor network. Check it: open check.torproject.org in this browser and look for \"Congratulations\". Not Tails: your OrbitNest login, files you upload and accounts you sign in to are not anonymous.")));
-  } else if (tpl?.privacy === "direct") {
-    notes.push(h("div", { class: "banner warn" }, icon("shield"), h("div", {}, h("strong", { text: "Not anonymous. " }), "Sites see this computer's real IP address and internet provider. For privacy, create a Tor Browser workspace instead.")));
+  } else if (ws.egress === "tor") {
+    notes.push(h("div", { class: "banner" }, icon("onion"), h("div", {}, h("strong", { text: "Routed through Tor. " }), "This workspace's network goes through a per-workspace Tor gateway, so sites it reaches see a Tor exit, not this computer's IP. Check it: open check.torproject.org in this browser. Not Tails and not Tor Browser: the browser's fingerprint can still differ, and anything you sign in to still identifies you.")));
+  } else if (ws.egress === "direct" || tpl?.privacy === "direct") {
+    notes.push(h("div", { class: "banner warn" }, icon("shield"), h("div", {}, h("strong", { text: "Not anonymous. " }), "Sites see this computer's real IP address and internet provider. For privacy, choose \"Through Tor\" when creating the workspace, or use the Tor Browser template.")));
   }
   say("Ready", "", null);
   if (live()) connect(); else say("Workspace is not running", "Start it, then the screen opens here.", null);

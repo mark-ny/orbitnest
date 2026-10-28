@@ -4,6 +4,9 @@ import { dialog, h, toast } from "./ui.js";
 
 const WHEN = { running: "Building…", done: "Finished", failed: "Failed", cancelled: "Cancelled", idle: "Starting…" };
 
+// `tpl` just needs an `id` (used as the title) and a `buildPath`, the `/build` endpoint to poll —
+// `/templates/{id}/build` for a template's own image, `/images/{name}/build` for a shared helper
+// image such as the Tor gateway.
 export async function installImageDialog(tpl) {
   const status = h("div", { class: "muted", text: "Starting…" });
   const log = h("pre", { class: "buildlog mono", "aria-live": "polite", text: "" });
@@ -23,16 +26,16 @@ export async function installImageDialog(tpl) {
   const poll = async () => {
     if (!node.isConnected) { clearInterval(timer); return; }
     try {
-      const st = await api("GET", `/templates/${tpl.id}/build`);
+      const st = await api("GET", tpl.buildPath);
       paint(st);
       if (st.state !== "running") { clearInterval(timer); finalState = st.state; }
     } catch (e) { status.textContent = e.message; clearInterval(timer); }
   };
   stop.addEventListener("click", async () => {
-    try { await api("DELETE", `/templates/${tpl.id}/build`); } catch (e) { toast(e.message, "error"); }
+    try { await api("DELETE", tpl.buildPath); } catch (e) { toast(e.message, "error"); }
   });
   try {
-    paint(await api("POST", `/templates/${tpl.id}/build`));
+    paint(await api("POST", tpl.buildPath));
   } catch (e) {
     if (e.status !== 409) { toast(e.message, "error"); return false; }
     status.textContent = e.message;

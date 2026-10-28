@@ -1,0 +1,12 @@
+User debian-tor
+DataDirectory /var/lib/tor
+ClientOnly 1
+AvoidDiskWrites 1
+# Loopback only: nothing outside the shared network namespace can use these ports.
+SocksPort 127.0.0.1:9050
+TransPort 127.0.0.1:9040
+DNSPort 127.0.0.1:5353
+AutomapHostsOnResolve 1
+VirtualAddrNetworkIPv4 10.192.0.0/10
+# No control port: the workload must not be able to talk to Tor's control interface.
+Log notice stderr

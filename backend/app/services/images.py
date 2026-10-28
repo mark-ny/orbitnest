@@ -19,7 +19,7 @@ BASE_IMAGES = {"debian": "debian:bookworm-slim", "ubuntu": "ubuntu:24.04", "kali
 # Which base each template image is built on.
 NEEDS_BASE = {"stream-desktop-ubuntu": "ubuntu", "stream-kali": "kali"}
 # Images that do not use a stream base (plain build contexts).
-NO_BASE = frozenset({"security-lab"})
+NO_BASE = frozenset({"security-lab", "tor-gateway"})
 
 
 def docker_dir() -> Path:
@@ -27,9 +27,14 @@ def docker_dir() -> Path:
     return Path(__file__).resolve().parents[3] / "docker"
 
 
+HELPER_IMAGES = {"tor-gateway": "orbitnest/tor-gateway:1"}  # not templates, but built the same way
+
+
 def buildable() -> dict[str, str]:
-    """build_context -> image tag, for every built-in template that is built locally."""
-    return {t.build_context: t.image for t in BUILTIN_TEMPLATES if t.build_context}
+    """build_context -> image tag, for every built-in template that is built locally, plus helpers."""
+    out = {t.build_context: t.image for t in BUILTIN_TEMPLATES if t.build_context}
+    out.update(HELPER_IMAGES)
+    return out
 
 
 def plan(selected: list[str] | None, root: Path | None = None, docker_bin: str = "docker") -> list[list[str]]:

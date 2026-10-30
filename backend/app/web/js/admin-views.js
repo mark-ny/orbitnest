@@ -1,7 +1,7 @@
 import { api } from "./api.js";
 import { errorBox, loadCaps, page, state } from "./core.js";
 import { installImageDialog } from "./images.js";
-import { ago, clear, confirmAction, dialog, fmtTime, h, pill, toast } from "./ui.js";
+import { ago, clear, confirmAction, dialog, fmtTime, h, pill, toast, errorMessage } from "./ui.js";
 
 const TABS = [["users", "Users"], ["policy", "Limits"], ["templates", "Templates"], ["audit", "Audit log"], ["system", "System"]];
 
@@ -12,7 +12,7 @@ function adminPage(tab, ...content) {
 }
 
 const act = async (label, fn) => {
-  try { await fn(); return true; } catch (e) { toast(`${label}: ${e.message}`, "error"); return false; }
+  try { await fn(); return true; } catch (e) { toast(`${label}: ${errorMessage(e)}`, "error"); return false; }
 };
 
 export async function adminView(tab = "users") {

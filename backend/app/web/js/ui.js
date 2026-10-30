@@ -24,6 +24,15 @@ export const add = (el, ...kids) => { for (const k of kids.flat()) if (k !== nul
 
 export const clear = (el) => { while (el.firstChild) el.removeChild(el.firstChild); };
 
+// Field-level validation errors (ApiError.details, shaped [{field, reason, type}]) are useful but
+// were being dropped on the floor by every call site that only read e.message. This formats them
+// onto the same line so a 422 actually says which field and why, not just "Request body is invalid."
+export function errorMessage(e) {
+  const fields = Array.isArray(e?.details) ? e.details.filter((d) => d && d.field && d.reason) : [];
+  if (!fields.length) return e?.message || String(e);
+  return `${e.message} (${fields.map((d) => `${d.field}: ${d.reason}`).join("; ")})`;
+}
+
 let toastBox;
 export function toast(message, kind = "") {
   toastBox ||= document.body.appendChild(h("div", { class: "toasts", role: "status" }));

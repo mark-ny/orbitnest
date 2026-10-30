@@ -260,5 +260,7 @@ dialog::backdrop { background: rgba(3, 6, 16, .66); backdrop-filter: blur(5px); 
 .rules { margin: 0; padding-left: 1.2rem; display: grid; gap: 4px; font-size: .88rem; }
 .capopt { display: flex; gap: 8px; align-items: flex-start; font-size: .88rem; }
 .capopt small { display: block; color: var(--muted); }
+.capopt.muted { opacity: .55; }
+.capopt .capnote.warn:not(:empty) { color: var(--warn); }
 pre.buildlog { max-height: 260px; overflow: auto; margin: 0; padding: 10px; border-radius: var(--radius-sm); background: var(--panel-2); border: 1px solid var(--line); font-size: .75rem; white-space: pre-wrap; word-break: break-all; }
 .banner[hidden] { display: none; }

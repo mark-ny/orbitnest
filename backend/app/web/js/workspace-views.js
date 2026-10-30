@@ -109,6 +109,21 @@ async function createDialog(templates) {
   const egressWarn = h("div", { class: "banner warn", hidden: true });
   const netBanner = h("div", {});
   const EGRESS_LABEL = { tor: "Through Tor (hides your IP from sites you visit)", direct: "Direct (this computer's real IP, no Tor)" };
+  // NET_ADMIN lets a workload rewrite its own network/firewall rules, which could route around the
+  // Tor gateway entirely, so the server refuses that combination outright (see workspaces.py). Grey
+  // it out here instead of letting the user discover that from a failed create.
+  const EGRESS_UNSAFE_CAPS = new Set(["NET_ADMIN"]);
+  const syncCapsWithEgress = () => {
+    const blocked = egressSel.value === "tor";
+    for (const [c, box] of capBoxes) {
+      if (!EGRESS_UNSAFE_CAPS.has(c)) continue;
+      box.disabled = blocked;
+      if (blocked) box.checked = false;
+      box.closest(".capopt")?.classList.toggle("muted", blocked);
+      const note = box.closest(".capopt")?.querySelector(".capnote");
+      if (note) note.textContent = blocked ? "Not available with Tor routing: set Network to Direct to use this." : "";
+    }
+  };
 
   const paintDetail = () => {
     const t = current();
@@ -152,6 +167,7 @@ async function createDialog(templates) {
         egressWarn.hidden = !noGateway;
         egressWarn.textContent = noGateway ? "The Tor gateway image is not installed. An administrator can install it from Admin, Templates; until then this workspace will fail to start on Tor." : "";
         paintNetBanner();
+        syncCapsWithEgress();
       };
       egressSel.onchange = checkEgress;
       checkEgress();
@@ -175,8 +191,9 @@ async function createDialog(templates) {
           t.optional_capabilities.map((c) => {
             const box = h("input", { type: "checkbox", id: `cap-${c}` });
             capBoxes.set(c, box);
-            return h("label", { class: "capopt", for: `cap-${c}` }, box, h("span", {}, h("code", { text: c }), h("small", { text: t.capability_help?.[c] || "" })));
+            return h("label", { class: "capopt", for: `cap-${c}` }, box, h("span", {}, h("code", { text: c }), h("small", { text: t.capability_help?.[c] || "" }), h("small", { class: "capnote warn" })));
           })) : null));
+      syncCapsWithEgress();
     }
   };
 

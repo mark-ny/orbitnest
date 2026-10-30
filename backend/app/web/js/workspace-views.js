@@ -3,13 +3,13 @@ import { canWrite, errorBox, loadCaps, modeBanner, navigate, page, poll, state }
 import { Terminal } from "./terminal.js";
 import { screenTab } from "./stream.js";
 import { installImageDialog } from "./images.js";
-import { add, ago, btn, busy, clear, confirmAction, dialog, fmtBytes, fmtTime, h, icon, pill, toast } from "./ui.js";
+import { add, ago, btn, busy, clear, confirmAction, dialog, errorMessage, fmtBytes, fmtTime, h, icon, pill, toast } from "./ui.js";
 
 const TRANSITIONAL = new Set(["provisioning", "starting", "stopping", "deleting"]);
 const PROFILE_HELP = { small: "0.5 CPU, 512 MB RAM", medium: "1 CPU, 1 GB RAM", large: "2 CPU, 2 GB RAM" };
 
 const run = async (label, fn) => {
-  try { const r = await fn(); return r ?? true; } catch (e) { toast(`${label}: ${e.message}`, "error"); return false; }
+  try { const r = await fn(); return r ?? true; } catch (e) { toast(`${label}: ${errorMessage(e)}`, "error"); return false; }
 };
 
 // ---------------------------------------------------------------------------------------------

@@ -19,7 +19,8 @@ RUN mkdir -p /etc/chromium/policies/managed \
   '"PasswordManagerEnabled": false,' \
   '"BackgroundModeEnabled": false,' \
   '"NetworkPredictionOptions": 2,' \
-  '"EnableMediaRouter": false' \
+  '"EnableMediaRouter": false,' \
+  '"QuicAllowed": false' \
   '}' > /etc/chromium/policies/managed/orbitnest-privacy.json
 USER 1000:1000
 # 16-bit colour halves the screen's memory traffic; software rendering (--disable-gpu) is the lightest
@@ -29,6 +30,6 @@ USER 1000:1000
 ENV ORBITNEST_RESOLUTION=1280x720x16
 CMD ["chromium", "--no-sandbox", "--test-type", "--no-first-run", "--no-default-browser-check", \
      "--disable-gpu", "--disable-smooth-scrolling", "--disable-extensions", "--disable-sync", \
-     "--disable-background-networking", "--force-webrtc-ip-handling-policy=disable_non_proxied_udp", "--disable-component-update", "--renderer-process-limit=3", \
+     "--disable-background-networking", "--force-webrtc-ip-handling-policy=disable_non_proxied_udp", "--disable-quic", "--disable-component-update", "--renderer-process-limit=3", \
      "--disable-features=TranslateUI,MediaRouter,OptimizationHints", \
      "--start-maximized", "--user-data-dir=/home/workspace/.chromium", "--window-size=1280,720", "about:blank"]

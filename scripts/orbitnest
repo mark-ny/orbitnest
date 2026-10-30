@@ -26,17 +26,34 @@ say() { printf '%s\n' "$*"; }
 running() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
 admin() { (cd "$REPO_DIR/backend" && "$PY" -m app "$@"); }
 
+port_open() {
+  "$PY" - "${ORBITNEST_HOST:-127.0.0.1}" "${ORBITNEST_PORT:-8765}" <<'PYEOF' 2>/dev/null
+import socket, sys
+s = socket.socket(); s.settimeout(1)
+try:
+    s.connect((sys.argv[1], int(sys.argv[2])))
+except OSError:
+    sys.exit(1)
+PYEOF
+}
+
 do_start() {
   if running; then say "Already running (pid $(cat "$PIDFILE")) at $URL"; return 0; fi
+  if port_open; then
+    say "Something else is already listening on $URL, so a new server cannot start." >&2
+    say "It is probably an older OrbitNest started by hand. Find it with:  ss -ltnp | grep ${ORBITNEST_PORT:-8765}" >&2
+    say "Then stop it (kill <pid>) and run 'orbitnest start' again." >&2
+    return 1
+  fi
   admin migrate >/dev/null
   (cd "$REPO_DIR/backend" && nohup "$PY" -m app serve >>"$LOGFILE" 2>&1 & echo $! >"$PIDFILE")
   chmod 600 "$LOGFILE" "$PIDFILE" 2>/dev/null || true
   for _ in $(seq 1 30); do
     running || { say "Server exited. Last log lines:"; tail -n 15 "$LOGFILE"; rm -f "$PIDFILE"; return 1; }
-    if "$PY" - "$URL/api/v1/health" <<'PYEOF' 2>/dev/null; then say "Started: $URL"; return 0; fi
-import sys, urllib.request
-urllib.request.urlopen(sys.argv[1], timeout=1)
-PYEOF
+    if port_open; then
+      sleep 2  # a server that dies right after binding must not count as started
+      running && { say "Started: $URL"; return 0; }
+    fi
     sleep 1
   done
   say "Started (pid $(cat "$PIDFILE")) but not answering yet. Check: orbitnest logs"

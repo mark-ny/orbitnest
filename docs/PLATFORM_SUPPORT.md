@@ -33,6 +33,7 @@ dashboard disables creation and says why.
 | `browser-chromium` | Full | Full | Remote host required | Full |  |
 | `browser-firefox` | Full | Full | Remote host required | Full |  |
 | `browser-tor` | Full | Full | Remote host required | Full | x86_64 only; needs outbound access. The build downloads and verifies Tor Browser. |
+| `browser-private-phone` | Unsupported | Unsupported | Limited | Unsupported | Termux only; proot-distro, NOT a sandbox. Uses phone CPU/RAM; wiped on stop. |
 | `desktop-ubuntu` | Full | Full | Remote host required | Full |  |
 | `desktop-kali` | Limited | Limited | Remote host required | Limited | Built locally, rolling Kali (several GB). Authorized use only; rules required. |
 | `terminal-ubuntu` | Full | Full | Limited (blocked: proot) | Full | Termux: would use proot-distro (no isolation). |

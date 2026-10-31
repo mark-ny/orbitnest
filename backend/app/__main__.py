@@ -227,7 +227,36 @@ def cmd_restore(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_setup_phone_browser(_: argparse.Namespace) -> int:
+    """One-time install of the Debian userland used by the Docker-less phone browser (Termux)."""
+    import shutil
+    import subprocess
+
+    from app.runtimes import proot_browser as pb
+
+    if shutil.which("proot-distro") is None:
+        print("proot-distro is missing. In Termux run:  pkg install proot-distro socat", file=sys.stderr)
+        return 1
+    if shutil.which("socat") is None:
+        print("socat is missing. In Termux run:  pkg install socat", file=sys.stderr)
+        return 1
+    print("This downloads a Debian userland and Chromium (a few hundred MB). It can take a while.")
+    for argv in pb.setup_commands():
+        print("+", " ".join(argv[:4]), "...")
+        if subprocess.run(argv, check=False).returncode != 0:  # noqa: S603 - fixed argv
+            print("Setup step failed; fix the error above and run the command again.", file=sys.stderr)
+            return 1
+    problem = pb.ProotBrowserRuntime(Path(_settings().data_dir) / "runtime-phone").not_ready()
+    if problem:
+        print(f"Still not ready: {problem[0]}", file=sys.stderr)
+        return 1
+    print("Done. Create a workspace from 'Private browser (this phone, no Docker)'.")
+    print("Reminder: this is not a sandbox. It stops sites and keeps no history; it does not isolate apps.")
+    return 0
+
+
 COMMANDS = {
+    "setup-phone-browser": cmd_setup_phone_browser,
     "build-images": cmd_build_images,
     "backup": cmd_backup,
     "restore": cmd_restore,

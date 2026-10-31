@@ -140,7 +140,18 @@ class WorkspaceService:
         return found
 
     def availability(self, template: Template) -> Availability:
-        return evaluate(template, self.capabilities(), image_present=self._image_present)
+        return evaluate(
+            template,
+            self.capabilities(),
+            image_present=self._image_present,
+            local_ready=self._local_ready,
+        )
+
+    def _local_ready(self, template: Template) -> tuple[str, str] | None:
+        """(why, how to fix) when the phone browser's userland is not set up, else None."""
+        adapter = self.adapters().get("proot-browser")
+        check = getattr(adapter, "not_ready", None)
+        return check() if callable(check) else None
 
     def tor_gateway_present(self) -> bool | None:
         """Cached (10 s) check that the shared Tor gateway image exists. None if it cannot be checked."""

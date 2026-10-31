@@ -132,7 +132,7 @@ class StreamService:
             )
         adapter = self.workspaces.adapters().get(ws.runtime)
         inst = self.workspaces.store.current_instance(ws.id)
-        if adapter is None or inst is None or adapter.isolation != "container":
+        if adapter is None or inst is None or not adapter.streams:
             raise errors.AppError(errors.WORKSPACE_BUSY, "The workspace has no running instance.", 409)
         return StreamTarget(ws.id, inst.resource_id, adapter, template.stream_port, template.image)
 

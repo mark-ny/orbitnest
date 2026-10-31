@@ -87,6 +87,7 @@ class DockerRuntime(RuntimeAdapter):
     spawn: Callable[..., ShellSession] = PtyShell.spawn
     shell_workdir: str = "/home/workspace"
     supports_tor: bool = True
+    streams: bool = True
     sleep: Callable[[float], None] = time.sleep
 
     # -- helpers -------------------------------------------------------------------------

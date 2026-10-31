@@ -330,7 +330,9 @@ class WorkspaceService:
         avail = self.availability(template)
         adapter = self.adapters().get(avail.runtime or "")
         if not avail.creatable or adapter is None:
-            reason = avail.reason or "No runtime is available for this template on this host."
+            reason = avail.reason or (
+                f"{template.name} cannot be created right now. An administrator can check Admin, System."
+            )
             self._audit(
                 actor, "create", "failure", None, ctx, {"template": template.id, "why": "unavailable"}
             )
@@ -612,6 +614,22 @@ class WorkspaceService:
         elif ws.status == "running":
             self.store.update_fields(ws.id, last_activity_at=now)
         return self.store.get(ws.id) or ws
+
+    def tor_check(self, actor: User, workspace_id: str, ctx: RequestContext | None = None) -> dict[str, Any]:
+        """Which exit address do this workspace's connections use, and is it really Tor?"""
+        ws = self._load(actor, workspace_id, write=False, ctx=ctx)
+        if ws.egress != "tor":
+            raise errors.AppError(errors.CONFLICT, "This workspace is not routed through Tor.", 409)
+        if ws.status not in ("running", "idle"):
+            raise errors.AppError(errors.CONFLICT, "Start the workspace first.", 409)
+        instance = self.store.current_instance(ws.id)
+        adapter = self.adapters().get(ws.runtime)
+        if instance is None or adapter is None:
+            raise errors.AppError(errors.CONFLICT, "The workspace has no running runtime.", 409)
+        try:
+            return adapter.tor_check(instance.resource_id)
+        except RuntimeFailure as exc:
+            raise errors.AppError(errors.NOT_READY, exc.safe_message, 503) from None
 
     def _ensure_runnable(self, ws: Workspace) -> None:
         template = self.registry.get(ws.template_id)
@@ -1014,6 +1032,17 @@ class WorkspaceService:
                 if ws is not None and ws.status == "provisioning" and not boot:
                     continue  # being created right now; not yet registered
                 found.append(_orphan(runtime, rid, wid, "not registered to any workspace"))
+            # A Tor gateway only makes sense next to its workspace; one whose workspace is gone
+            # (or was deleted) is a leftover from a crash and keeps a Tor process running for nothing.
+            try:
+                gateways = adapter.list_gateways()
+            except RuntimeFailure:
+                continue
+            for rid, labels in gateways.items():
+                wid = labels.get(LABEL_WORKSPACE, "")
+                ws = self.store.get(wid) if wid else None
+                if ws is None or ws.status == "deleted":
+                    found.append(_orphan(runtime, rid, wid, "Tor gateway whose workspace no longer exists"))
         return found
 
     def cleanup(self, *, apply: bool = False, boot: bool = False) -> MaintenanceReport:

@@ -295,6 +295,24 @@ class DockerRuntime(RuntimeAdapter):
             return parts[1].split(":", 1)[1]
         return None
 
+    def tor_check(self, resource_id: str) -> dict[str, object]:
+        gateway = self._gateway_of(self._rid(resource_id))
+        if gateway is None:
+            raise RuntimeFailure("This workspace is not routed through Tor.", operation="tor_check")
+        res = self._docker(["exec", gateway, "/usr/local/bin/orbitnest-check"], timeout=60)
+        if res.returncode != 0:
+            raise RuntimeFailure(
+                "Could not reach the Tor check service through Tor. Tor may still be connecting; try again.",
+                operation="tor_check",
+            )
+        try:
+            data = json.loads(res.stdout)
+        except json.JSONDecodeError:
+            raise RuntimeFailure(
+                "The Tor check service gave an unreadable answer.", operation="tor_check"
+            ) from None
+        return {"is_tor": bool(data.get("IsTor")), "exit_ip": str(data.get("IP", ""))[:64]}
+
     # -- adapter API ---------------------------------------------------------------------
     def create(self, spec: RuntimeSpec) -> str:
         argv = self.build_create_argv(spec)  # validates first: invalid specs never reach docker
@@ -458,7 +476,7 @@ class DockerRuntime(RuntimeAdapter):
             self._exec_env(),
         )
 
-    def list_managed(self) -> dict[str, dict[str, str]]:
+    def _list_labelled(self, *, gateways: bool) -> dict[str, dict[str, str]]:
         result = self._check(
             self._docker(
                 [
@@ -482,7 +500,14 @@ class DockerRuntime(RuntimeAdapter):
             rid = str(item.get("ID", ""))
             if RESOURCE_ID_RE.match(rid):
                 labels = dict(p.split("=", 1) for p in str(item.get("Labels", "")).split(",") if "=" in p)
-                if labels.get(LABEL_ROLE) == "tor-gateway":
-                    continue  # helpers are removed together with their workspace, never listed as orphans
+                if (labels.get(LABEL_ROLE) == "tor-gateway") != gateways:
+                    continue
                 found[rid] = labels
         return found
+
+    def list_managed(self) -> dict[str, dict[str, str]]:
+        # Gateways are removed together with their workspace, so they are never listed as workloads.
+        return self._list_labelled(gateways=False)
+
+    def list_gateways(self) -> dict[str, dict[str, str]]:
+        return self._list_labelled(gateways=True)

@@ -210,3 +210,27 @@ all of it is covered by unit tests against a scripted Docker CLI (`tests/test_do
   per-workspace egress rather than a static per-template label.
 - `docs/INSTALL.md` rewritten for detail-over-code-blocks per request, including a "Staying
   anonymous" section stating plainly what the Tor gateway does and does not provide.
+
+## 2026-10-31: operability and privacy polish
+
+All covered by unit tests (452 passing at last run); the new Docker-facing pieces (`tor_check`,
+gateway listing) are tested against a scripted Docker CLI, not a real daemon.
+
+- **Admin, System** now opens with a Health section: Docker reachable, every buildable image
+  installed or not, running/leftover Tor gateways, backup age and whether GitHub has newer code. Each
+  problem is one plain sentence plus the exact fix. API: `GET /api/v1/system/report` (admin only).
+- **Update banner** for administrators on the Workspaces page (`GET /api/v1/system/update`; a cached
+  `git fetch`, at most every 30 minutes). It tells the admin to run `orbitnest update`; the server
+  does not restart itself from a web click.
+- **Leftover Tor gateways** (their workspace is gone or deleted) are now reported and removed by
+  `orbitnest cleanup [--apply]`; gateways of live workspaces are never touched.
+- **Check my Tor connection** on a Tor-routed workspace's Overview: runs a request inside the
+  gateway, through Tor's own SOCKS port, to check.torproject.org and shows the exit address.
+  The gateway image gained `curl` and `orbitnest-check`, so rebuild it once.
+- Fixed: the capability report claimed streaming was "not implemented"; it now follows the container
+  runtime. The generic "no runtime is available" failure now names the template and where to look.
+  Closing a tab mid-stream no longer logs a traceback.
+- Browsers: UTC timezone and English locale by default, so the host's real ones do not leak.
+- Not done, deliberately: a "new Tor identity" button (needs Tor's control port, which the gateway
+  keeps closed so a workspace cannot reach it) and scheduled automatic backups (the health page warns
+  when none exist).

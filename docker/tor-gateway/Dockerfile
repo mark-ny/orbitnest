@@ -8,9 +8,10 @@
 FROM debian:bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
- && apt-get install -y --no-install-recommends tor iptables ca-certificates procps \
+ && apt-get install -y --no-install-recommends tor iptables ca-certificates procps curl \
  && rm -rf /var/lib/apt/lists/*
 COPY torrc /etc/tor/orbitnest-torrc
 COPY orbitnest-gateway /usr/local/bin/orbitnest-gateway
-RUN chmod 0755 /usr/local/bin/orbitnest-gateway
+COPY orbitnest-check /usr/local/bin/orbitnest-check
+RUN chmod 0755 /usr/local/bin/orbitnest-gateway /usr/local/bin/orbitnest-check
 ENTRYPOINT ["/usr/local/bin/orbitnest-gateway"]

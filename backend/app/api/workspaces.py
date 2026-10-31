@@ -368,6 +368,14 @@ def _action(name: str):
     return handler
 
 
+async def tor_check_workspace(request: Request) -> JSONResponse:
+    auth = authenticate(request, permission=Perm.WORKSPACE_READ)
+    result = await run_in_threadpool(
+        _svc(request).tor_check, auth.user, request.path_params["workspace_id"], request_context(request)
+    )
+    return JSONResponse(result)
+
+
 async def reset_workspace(request: Request) -> JSONResponse:
     auth = authenticate(request, permission=Perm.WORKSPACE_WRITE)
     raw = await request.body()
@@ -454,6 +462,7 @@ routes = [
     Route("/workspaces/{workspace_id}/stop", _action("stop"), methods=["POST"]),
     Route("/workspaces/{workspace_id}/restart", _action("restart"), methods=["POST"]),
     Route("/workspaces/{workspace_id}/reset", reset_workspace, methods=["POST"]),
+    Route("/workspaces/{workspace_id}/tor-check", tor_check_workspace, methods=["POST"]),
     Route("/workspaces/{workspace_id}/activity", _action("touch_activity"), methods=["POST"]),
     Route("/workspaces/{workspace_id}/events", workspace_events, methods=["GET"]),
     Route("/settings/policy", get_policy, methods=["GET"]),

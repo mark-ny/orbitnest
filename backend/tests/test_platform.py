@@ -120,9 +120,14 @@ class CapabilityTests(unittest.TestCase):
         c = self.caps(TERMUX_ENV, "linux", available=())
         self.assertEqual(c.features["proot_userland"].state, "unsupported")
 
-    def test_unimplemented_features_are_not_advertised(self) -> None:
+    def test_streaming_follows_the_container_runtime(self) -> None:
         c = self.caps({}, "linux")
-        self.assertEqual(c.features["desktop_streaming"].state, "not_implemented")
+        self.assertEqual(c.features["desktop_streaming"].state, c.features["container_workspaces"].state)
+        t = self.caps(TERMUX_ENV, "linux", available=())
+        self.assertEqual(t.features["desktop_streaming"].state, "unsupported")
+
+    def test_other_features_report_available(self) -> None:
+        c = self.caps({}, "linux")
         self.assertEqual(c.features["browser_terminal"].state, "available")
         self.assertEqual(c.features["file_manager"].state, "available")
 

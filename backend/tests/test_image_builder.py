@@ -91,6 +91,17 @@ class BuilderTests(unittest.TestCase):
         self.assertEqual(st["state"], "cancelled")
         self.assertFalse(b.cancel("stream-chromium"))
 
+    def test_shutdown_cancels_active_build_and_joins_worker(self) -> None:
+        b = ImageBuilder(planner=planner_for("import time; time.sleep(30)"))
+        b.start("stream-chromium")
+        end = time.monotonic() + 2
+        while b.running() is None and time.monotonic() < end:
+            time.sleep(0.01)
+        b.shutdown()
+        st = wait_done(b, "stream-chromium")
+        self.assertEqual(st["state"], "cancelled")
+        self.assertIsNone(b.running())
+
     def test_log_is_bounded(self) -> None:
         b = ImageBuilder(planner=planner_for(f"[print('x' * 1000) for _ in range({MAX_LOG_LINES * 3})]"))
         b.start("stream-chromium")

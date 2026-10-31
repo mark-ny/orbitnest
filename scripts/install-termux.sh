@@ -50,7 +50,10 @@ ENVEOF
   chmod 600 "$ENV_FILE"
 fi
 
-set -a; . "$ENV_FILE"; set +a
+set -a
+# shellcheck disable=SC1090
+. "$ENV_FILE"
+set +a
 cd "$REPO_DIR/backend"
 "$VENV/bin/python" -m app migrate
 say ""

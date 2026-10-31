@@ -174,6 +174,7 @@ def create_app(
             yield
         finally:
             maintenance.stop()
+            image_builder.shutdown()
             terminals.close_all()
             streams.close_all()
             workspace_service.runner.shutdown()

@@ -86,6 +86,7 @@ class ImageBuilder:
         self._states: dict[str, BuildState] = {}
         self._procs: dict[str, subprocess.Popen[str]] = {}
         self._cancel: set[str] = set()
+        self._threads: set[threading.Thread] = set()
 
     def _plan(self, context: str) -> list[list[str]]:
         if self._planner is not None:
@@ -121,7 +122,9 @@ class ImageBuilder:
                 )
             state = BuildState(context=context, steps=len(steps))
             self._states[context] = state
-        threading.Thread(target=self._run, args=(state, steps), name=f"build-{context}", daemon=True).start()
+            thread = threading.Thread(target=self._run, args=(state, steps), name=f"build-{context}", daemon=True)
+            self._threads.add(thread)
+            thread.start()
         return state.to_dict()
 
     def cancel(self, context: str) -> bool:
@@ -135,6 +138,21 @@ class ImageBuilder:
             with contextlib.suppress(ProcessLookupError, OSError):
                 proc.kill()
         return True
+
+    def shutdown(self, timeout: float = 5.0) -> None:
+        """Stop active builds before the application exits and wait for their workers to finish."""
+        with self._lock:
+            contexts = [context for context, state in self._states.items() if state.state == "running"]
+            self._cancel.update(contexts)
+            procs = list(self._procs.values())
+            threads = list(self._threads)
+        for proc in procs:
+            with contextlib.suppress(ProcessLookupError, OSError):
+                proc.kill()
+        deadline = time.monotonic() + timeout
+        for thread in threads:
+            remaining = max(0.0, deadline - time.monotonic())
+            thread.join(remaining)
 
     # -- worker ------------------------------------------------------------------------------
     def _run(self, state: BuildState, steps: list[list[str]]) -> None:
@@ -194,6 +212,7 @@ class ImageBuilder:
             with self._lock:
                 self._procs.pop(state.context, None)
                 self._cancel.discard(state.context)
+                self._threads.discard(threading.current_thread())
             state.finished_at = time.time()
             with contextlib.suppress(Exception):
                 self._on_finished()

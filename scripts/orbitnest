@@ -12,7 +12,10 @@ ENV_FILE=""
 for c in "${CANDIDATES[@]}"; do [ -n "$c" ] && [ -f "$c" ] && ENV_FILE="$c" && break; done
 [ -n "$ENV_FILE" ] || { echo "orbitnest: no config found. Run the installer in $REPO_DIR/scripts first." >&2; exit 1; }
 
-set -a; . "$ENV_FILE"; set +a
+set -a
+# shellcheck disable=SC1090
+. "$ENV_FILE"
+set +a
 DATA_DIR="${ORBITNEST_DATA_DIR:-$(dirname "$ENV_FILE")}"
 VENV="${ORBITNEST_VENV:-$DATA_DIR/venv}"
 PY="$VENV/bin/python"
@@ -63,7 +66,9 @@ do_stop() {
   if ! running; then say "Not running."; rm -f "$PIDFILE"; return 0; fi
   pid="$(cat "$PIDFILE")"; kill "$pid"
   for _ in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done
-  kill -0 "$pid" 2>/dev/null && kill -9 "$pid" || true
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -9 "$pid" || true
+  fi
   rm -f "$PIDFILE"; say "Stopped."
 }
 

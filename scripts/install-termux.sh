@@ -33,7 +33,7 @@ export ANDROID_API_LEVEL="${ANDROID_API_LEVEL:-$(getprop ro.build.version.sdk 2>
 unset CARGO_BUILD_TARGET  # an empty value makes cargo fail with "target was empty"
 "$VENV/bin/python" -m pip install --upgrade pip
 "$VENV/bin/python" -m pip install -r "$REPO_DIR/backend/requirements.txt" ||
-  die "dependency install failed. See docs/TERMUX.md (troubleshooting) for the pydantic-core build notes."
+  die "dependency install failed. See docs/INSTALL.md (the Termux section) for the pydantic-core build notes."
 
 if [ ! -f "$ENV_FILE" ]; then
   SECRET="$("$VENV/bin/python" -c 'import secrets; print(secrets.token_urlsafe(48))')"
@@ -50,7 +50,10 @@ ENVEOF
   chmod 600 "$ENV_FILE"
 fi
 
-set -a; . "$ENV_FILE"; set +a
+set -a
+# shellcheck disable=SC1090
+. "$ENV_FILE"
+set +a
 cd "$REPO_DIR/backend"
 "$VENV/bin/python" -m app migrate
 say ""
@@ -70,5 +73,5 @@ Next steps:
   3. Open http://127.0.0.1:8765 in the phone's browser.
   Later, to get new versions from GitHub:   orbitnest update
   Other commands: orbitnest stop | restart | status | logs
-Run termux-wake-lock so Android is less likely to stop it. See docs/TERMUX.md.
+Run termux-wake-lock so Android is less likely to stop it. See docs/INSTALL.md (the Termux section).
 NEXT

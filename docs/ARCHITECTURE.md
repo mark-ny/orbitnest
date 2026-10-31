@@ -84,7 +84,8 @@ Out until verified: streamed desktops/browsers (Phase 8), OIDC, Podman, PostgreS
   used by the workspace service in Phase 3.
 - **Recovery (needs shell access to the host):** `python -m app setup-token | create-admin <name> |
   reset-password <name> | revoke-sessions`. All recovery actions are audited.
-- **Known gaps:** no OIDC (optional in spec, not started); no 2FA; no email-based self-service
+- **Known gaps:** no OIDC (optional in spec, not started); TOTP 2FA is available but requires
+  manually entering the setup key because there is no QR-code flow; no email-based self-service
   reset (admin-issued single-use tokens only, because there is no mail transport).
 
 ## Workspace lifecycle (Phases 3-4)

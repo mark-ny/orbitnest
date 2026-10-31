@@ -109,7 +109,11 @@ class EdgeMiddleware:
 
         try:
             await self.app(scope, receive, send_wrapper)
-        except Exception:
+        except Exception as exc:
+            if scope["type"] == "websocket" and _is_client_gone(exc):
+                # A browser tab closed mid-session. Expected, and not worth a traceback.
+                log.info("websocket client disconnected", extra={"path": scope.get("path")})
+                return
             log.exception("unhandled error", extra={"path": scope.get("path"), "method": scope.get("method")})
             if not started:
                 await _send_error(
@@ -117,6 +121,17 @@ class EdgeMiddleware:
                 )
         finally:
             request_id_var.reset(token)
+
+
+def _is_client_gone(exc: BaseException | None) -> bool:
+    """True when the error (or what it was raised while handling) is just the peer going away."""
+    seen = 0
+    while exc is not None and seen < 5:
+        if type(exc).__name__ in {"WebSocketDisconnect", "ClientDisconnected", "ConnectionResetError"}:
+            return True
+        exc = exc.__context__ or exc.__cause__
+        seen += 1
+    return False
 
 
 class HostCheckMiddleware:

@@ -305,10 +305,21 @@ def _features(mode: Mode, info: PlatformInfo, proot: RuntimeStatus | None) -> di
         features["file_manager"] = FeatureStatus(
             state="available", reason="Files are managed on the host and work while a workspace is stopped."
         )
-    # Honest placeholder: no streaming stack is built or verified.
-    features["desktop_streaming"] = FeatureStatus(
-        state="not_implemented", reason="Browser/desktop streaming is built in a later phase."
-    )
+    # Browser and desktop workspaces are streamed from a container (VNC bridged over `docker exec`),
+    # so they need exactly what container workspaces need. Whether a particular template's image is
+    # built is reported per template, not here.
+    if mode in ("linux-docker", "windows-docker-desktop"):
+        features["desktop_streaming"] = FeatureStatus(
+            state="available",
+            reason="Browser and desktop workspaces are streamed from containers. Each template's image "
+            "must be built first (Admin, Templates).",
+        )
+    else:
+        features["desktop_streaming"] = FeatureStatus(
+            state="unsupported",
+            reason="Streaming browsers and desktops need a container runtime, which this host does not have.",
+            remediation=_docker_remediation(info),
+        )
     return features
 
 

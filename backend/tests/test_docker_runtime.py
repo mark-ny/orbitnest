@@ -188,6 +188,30 @@ class TorGatewayTests(unittest.TestCase):
         cli.rc_override["ps"] = CommandResult(0, listing, "")
         self.assertEqual(rt.list_managed(), {})
 
+    def test_gateways_are_listed_separately_for_orphan_cleanup(self) -> None:
+        cli = ScriptedDocker()
+        rt = DockerRuntime(run=cli, user="1000:1000")
+        listing = "\n".join(
+            json.dumps({"ID": c * 64, "Labels": f"orbitnest.managed=true,orbitnest.workspace={WSID},{extra}"})
+            for c, extra in (("b", "orbitnest.role=tor-gateway"), ("c", "orbitnest.role=workspace"))
+        )
+        cli.rc_override["ps"] = CommandResult(0, listing, "")
+        self.assertEqual(list(rt.list_gateways()), ["b" * 64])
+        self.assertEqual(list(rt.list_managed()), ["c" * 64])
+
+    def test_tor_check_runs_inside_the_gateway_and_parses_the_answer(self) -> None:
+        class Cli(GatewayDocker):
+            def __call__(self, argv, timeout):
+                if "orbitnest-check" in " ".join(argv):
+                    self.calls.append(list(argv))
+                    return CommandResult(0, '{"IsTor":true,"IP":"198.51.100.4"}', "")
+                return super().__call__(argv, timeout)
+
+        cli = Cli()
+        rt = DockerRuntime(run=cli, user="1000:1000", sleep=lambda _s: None)
+        self.assertEqual(rt.tor_check(CID), {"is_tor": True, "exit_ip": "198.51.100.4"})
+        self.assertTrue(any(c[1] == "exec" and c[2].startswith("orbitnest-tor-") for c in cli.calls))
+
     def test_gateway_image_names_agree(self) -> None:
         from app.runtimes.docker_runtime import TOR_GATEWAY_IMAGE
         from app.services import images

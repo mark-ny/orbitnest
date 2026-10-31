@@ -1,0 +1,4 @@
+#!/bin/sh
+# Asks the Tor Project whether this gateway's traffic arrives through Tor, via Tor's own SOCKS port.
+# Prints the service's JSON answer ({"IsTor":true,"IP":"<exit address>"}) and nothing else.
+exec curl --silent --show-error --max-time 40 --socks5-hostname 127.0.0.1:9050 https://check.torproject.org/api/ip

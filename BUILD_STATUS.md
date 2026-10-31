@@ -1,6 +1,10 @@
 # BUILD_STATUS
 
-Last updated: 2026-10-25 (Phases 0-4 complete)
+Last updated: 2026-11-01 (reliability and CI hardening)
+
+Current local validation: 470 Python tests pass with `ResourceWarning` promoted to errors; ShellCheck
+and Bash syntax checks pass for the Linux installer, Termux installer, and launcher. Real Docker,
+browser end-to-end, and target-platform validation remain outstanding.
 
 ## Environment of the build sandbox (verified by inspection)
 

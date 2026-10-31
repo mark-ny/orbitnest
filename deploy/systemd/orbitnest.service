@@ -3,7 +3,9 @@
 #   mkdir -p ~/.config/systemd/user && cp orbitnest.service ~/.config/systemd/user/
 #   systemctl --user daemon-reload && systemctl --user enable --now orbitnest
 #   loginctl enable-linger "$USER"      # keep it running after logout
-# Adjust the paths below to where install-linux.sh put things.
+# The installer places the launcher at ~/.local/bin/orbitnest. The launcher resolves the
+# source checkout itself, so this unit works whether the repository is in ~/orbitnest-src,
+# ~/src/orbitnest, or another directory.
 [Unit]
 Description=OrbitNest Workspaces control plane
 After=network-online.target docker.service
@@ -12,8 +14,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=%h/.config/orbitnest/orbitnest.env
-WorkingDirectory=%h/orbitnest-src/backend
-ExecStart=%h/.local/share/orbitnest/venv/bin/python -m app serve
+ExecStart=%h/.local/bin/orbitnest run
 Restart=on-failure
 RestartSec=3
 # Hardening. The service needs the Docker socket (via the docker group), so do not add

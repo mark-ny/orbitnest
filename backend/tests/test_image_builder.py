@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import sys
 import time
 import unittest
@@ -27,6 +28,32 @@ def wait_done(builder: ImageBuilder, ctx: str, timeout: float = 10.0) -> dict:
 
 
 class BuilderTests(unittest.TestCase):
+    def test_process_output_stream_is_closed(self) -> None:
+        class TrackingStream(io.StringIO):
+            pass
+
+        class TrackingProcess:
+            def __init__(self) -> None:
+                self.stdout = TrackingStream("hello\n")
+                self.returncode = None
+
+            def wait(self) -> int:
+                self.returncode = 0
+                return 0
+
+            def kill(self) -> None:
+                self.returncode = -9
+
+        process = TrackingProcess()
+        b = ImageBuilder(
+            planner=lambda _ctx: [["docker", "build"]],
+            spawn=lambda _argv, _env: process,  # type: ignore[arg-type]
+        )
+        b.start("stream-chromium")
+        st = wait_done(b, "stream-chromium")
+        self.assertEqual(st["state"], "done")
+        self.assertTrue(process.stdout.closed)
+
     def test_success_runs_all_steps_and_notifies(self) -> None:
         done = []
         b = ImageBuilder(

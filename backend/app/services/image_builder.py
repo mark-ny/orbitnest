@@ -156,13 +156,26 @@ class ImageBuilder:
                 if cancel_now:
                     with contextlib.suppress(ProcessLookupError, OSError):
                         proc.kill()
-                assert proc.stdout is not None
-                for line in proc.stdout:
-                    state.lines.append(line.rstrip("\r\n")[:MAX_LINE_CHARS])
-                    if time.monotonic() > deadline:
+                try:
+                    assert proc.stdout is not None
+                    for line in proc.stdout:
+                        state.lines.append(line.rstrip("\r\n")[:MAX_LINE_CHARS])
+                        if time.monotonic() > deadline:
+                            proc.kill()
+                            state.error = "The build took too long and was stopped."
+                            break
+                except BaseException:
+                    with contextlib.suppress(ProcessLookupError, OSError):
                         proc.kill()
-                        state.error = "The build took too long and was stopped."
-                        break
+                    with contextlib.suppress(Exception):
+                        proc.wait()
+                    raise
+                finally:
+                    # Popen does not close PIPE handles when wait() is called. Explicitly close the
+                    # text wrapper so long-running image builds do not accumulate file descriptors.
+                    with contextlib.suppress(Exception):
+                        if proc.stdout is not None:
+                            proc.stdout.close()
                 code = proc.wait()
                 with self._lock:
                     cancelled = state.context in self._cancel

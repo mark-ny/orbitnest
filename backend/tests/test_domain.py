@@ -118,6 +118,7 @@ class TemplateTests(unittest.TestCase):
             [
                 "browser-chromium",
                 "browser-firefox",
+                "browser-private-phone",
                 "browser-tor",
                 "desktop-ubuntu",
                 "desktop-kali",

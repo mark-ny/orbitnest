@@ -40,6 +40,7 @@ _TEMPLATE_PUBLIC = (
     "authorized_use_only", "deprecated", "deprecation_note", "update_policy", "enabled",
     "disabled_reason", "notes", "builtin", "local_supported", "optional_capabilities", "privacy",
     "recommended_profile", "min_profile", "default_egress", "allowed_egress",
+    "privacy_notice", "local_browser",
 )  # fmt: skip
 
 
@@ -55,7 +56,7 @@ def workspace_json(ws: Workspace, *, include_owner: bool = False) -> dict[str, A
         "template_id": ws.template_id,
         "runtime": ws.runtime,
         # "none" means the workload is an ordinary process on the host (Termux), NOT a container.
-        "isolation": "none" if ws.runtime == "local" else "container",
+        "isolation": "container" if ws.runtime == "docker" else "none",
         "status": ws.status,
         "status_reason": ws.status_reason,
         "persistence": ws.persistence,

@@ -117,6 +117,10 @@ class Template(BaseModel):
     local_supported: bool = False
     required_local_tools: tuple[str, ...] = ()
     local_command: tuple[str, ...] = ()
+    # Termux only: run as a streamed browser inside a proot-distro userland (no Docker). NOT a sandbox.
+    local_browser: bool = False
+    # Replaces the generic privacy banner where the generic wording would be wrong for a template.
+    privacy_notice: str | None = Field(default=None, max_length=600)
     authorized_use_only: bool = False
     deprecated: bool = False
     deprecation_note: str | None = None
@@ -273,6 +277,37 @@ BUILTIN_TEMPLATES: tuple[Template, ...] = (
         default_persistence="disposable",
         default_idle_minutes=30,
         notes="Built locally from docker/stream-firefox (python -m app build-images).",
+    ),
+    _builtin(
+        id="browser-private-phone",
+        name="Private browser (this phone, no Docker)",
+        description=(
+            "Chromium running on this phone's own CPU and RAM inside a proot-distro userland, streamed to "
+            "a new page. Traffic goes through its own Tor; everything is wiped when the session stops."
+        ),
+        category="browser",
+        image="proot-distro:debian",
+        access="stream",
+        stream_port=5900,
+        default_egress="direct",
+        allowed_egress=("direct",),
+        allowed_networks=("isolated-bridge",),
+        network_policy="isolated-bridge",
+        privacy="tor",
+        privacy_notice=(
+            "Private browser on this phone. Its web traffic goes through its own Tor process, so sites see "
+            "a Tor exit instead of your IP address, and its session folder is erased when it stops. This is "
+            "NOT an isolated container: it runs as your Termux user on this phone with no sandbox, and it is "
+            "an ordinary Chromium fingerprint, not Tor Browser. Your carrier can see that you use Tor."
+        ),
+        local_supported=True,
+        local_browser=True,
+        required_local_tools=("proot-distro", "socat"),
+        default_profile="large",
+        recommended_profile="large",
+        default_persistence="disposable",
+        default_idle_minutes=30,
+        notes="Termux only. One-time setup: orbitnest setup-phone-browser. No isolation.",
     ),
     _builtin(
         id="browser-tor",
@@ -434,6 +469,8 @@ def validate_custom_definition(payload: dict[str, Any]) -> Template:
         raise TemplateError("custom templates cannot run as local processes")
     if set(data.get("capabilities") or ()) - CUSTOM_ALLOWED_CAPABILITIES:
         raise TemplateError("custom templates may only use the NET_BIND_SERVICE capability")
+    if data.get("local_browser") or data.get("privacy_notice"):
+        raise TemplateError("only built-in templates may use the local browser runtime or a privacy notice")
     if data.get("run_as_root"):
         raise TemplateError("only built-in lab templates may run as root inside the container")
     if data.get("optional_capabilities"):
@@ -472,6 +509,8 @@ class Availability:
         }
 
 
+_TERMUX_PACKAGES = {"python3": "python", "node": "nodejs", "proot-distro": "proot-distro", "socat": "socat"}
+
 _MODE_TO_COLUMN = {
     "linux-docker": ("linux-docker", "docker"),
     "windows-docker-desktop": ("windows-docker-desktop", "docker"),
@@ -485,6 +524,7 @@ def evaluate(
     *,
     which: Callable[[str], str | None] = shutil.which,
     image_present: Callable[[Template], bool | None] | None = None,
+    local_ready: Callable[[Template], tuple[str, str] | None] | None = None,
 ) -> Availability:
     """Decide availability from the matrix, the detected capabilities, and unbuilt-feature blockers."""
     if not template.enabled:
@@ -500,6 +540,8 @@ def evaluate(
             feature.remediation if feature else None,
         )
     column, runtime = mapped
+    if runtime == "local" and template.local_browser:
+        runtime = "proot-browser"  # its own adapter: a streamed browser inside proot-distro, no Docker
     state = matrix.matrix_state(template.matrix_key, column)
     isolation = "container" if runtime == "docker" else "none"
     blocker = matrix.BLOCKED.get((template.matrix_key, column))
@@ -530,7 +572,7 @@ def evaluate(
             "Run: python -m app build-images " + template.build_context,
             isolation,
         )
-    if runtime == "local":
+    if runtime in ("local", "proot-browser"):
         if not template.local_supported:
             return Availability(
                 False, state, runtime, "This profile cannot run as a local process.", isolation=isolation
@@ -542,9 +584,13 @@ def evaluate(
                 state,
                 runtime,
                 f"Required tool not installed: {missing[0]}",
-                f"In Termux run: pkg install {'python' if missing[0] == 'python3' else 'nodejs'}",
+                f"In Termux run: pkg install {_TERMUX_PACKAGES.get(missing[0], missing[0])}",
                 isolation,
             )
+        if runtime == "proot-browser" and local_ready is not None:
+            problem = local_ready(template)
+            if problem is not None:
+                return Availability(False, state, runtime, problem[0], problem[1], isolation)
     return Availability(True, state, runtime, isolation=isolation)
 
 

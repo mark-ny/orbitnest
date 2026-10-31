@@ -19,7 +19,11 @@ class ImagePlanTests(unittest.TestCase):
         self.assertTrue((DOCKER / "stream-base" / "orbitnest-session").is_file())
 
     def test_stream_templates_all_buildable(self) -> None:
-        streamed = {t.build_context for t in BUILTIN_TEMPLATES if t.access == "stream" and t.enabled}
+        streamed = {
+            t.build_context
+            for t in BUILTIN_TEMPLATES
+            if t.access == "stream" and t.enabled and t.build_context
+        }
         self.assertEqual(streamed | images.NO_BASE, set(images.buildable()))
 
     def test_plan_builds_bases_first_and_picks_the_right_one(self) -> None:

@@ -89,6 +89,27 @@ described in `BUILD_STATUS.md`, once it ships.
 4. Create your administrator with `orbitnest create-admin <username>`, then start the server with
    `orbitnest start`. Open `http://127.0.0.1:8765` in the phone's own browser.
 
+### Private browser on the phone, without Docker (optional)
+
+If you want a browser that runs on the phone's own CPU and RAM, streamed to a page in OrbitNest, and
+erased when you finish:
+
+1. In Termux: `pkg install proot-distro socat`
+2. Once: `orbitnest setup-phone-browser` (downloads a Debian userland with Chromium, Tor and a VNC
+   server; a few hundred MB, several minutes).
+3. In OrbitNest, create a workspace from **Private browser (this phone, no Docker)** and open its
+   Screen tab. The browser appears after its own Tor process finishes connecting; if Tor cannot
+   connect, the browser is never started.
+
+What this is and is not. It is NOT a sandbox: proot only fakes a root filesystem, and the browser
+runs as your Termux user on your phone's network. What it does give you: web traffic is sent through
+Tor by an explicit browser proxy setting (DNS included, QUIC and WebRTC leaks switched off), the screen
+is reached through a private unix socket rather than a network port, and the whole session folder
+(profile, history, cookies, downloads, Tor state) is deleted when the workspace stops. Because Android
+gives apps no firewall, Tor routing here is a browser setting, not an enforced network rule like the
+Docker gateway. This feature was tested only against a stand-in for proot-distro; the first real run
+on a phone is the real test, so please report what happens.
+
 Two things are worth knowing about running a server on a phone: Android aggressively kills
 background processes to save battery, so run `termux-wake-lock` while OrbitNest is running and
 exempt Termux from battery optimization in Android's settings, or expect the server to stop when

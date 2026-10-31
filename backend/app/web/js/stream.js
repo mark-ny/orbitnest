@@ -109,7 +109,9 @@ export function screenTab(ws, pane, tpl) {
   state.onLeave = () => { disconnect(); if (document.fullscreenElement) document.exitFullscreen(); };
 
   const notes = [];
-  if (tpl?.privacy === "tor") {
+  if (tpl?.privacy_notice) {
+    notes.push(h("div", { class: "banner warn" }, icon("shield"), h("div", {}, h("strong", { text: "Private browser on this phone. " }), tpl.privacy_notice)));
+  } else if (tpl?.privacy === "tor") {
     notes.push(h("div", { class: "banner" }, icon("onion"), h("div", {}, h("strong", { text: "Tor Browser. " }), "Web traffic from this window goes through the Tor network. Check it: open check.torproject.org in this browser and look for \"Congratulations\". Not Tails: your OrbitNest login, files you upload and accounts you sign in to are not anonymous.")));
   } else if (ws.egress === "tor") {
     notes.push(h("div", { class: "banner" }, icon("onion"), h("div", {}, h("strong", { text: "Routed through Tor. " }), "This workspace's network goes through a per-workspace Tor gateway, so sites it reaches see a Tor exit, not this computer's IP. Check it: open check.torproject.org in this browser. Not Tails and not Tor Browser: the browser's fingerprint can still differ, and anything you sign in to still identifies you.")));

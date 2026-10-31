@@ -568,6 +568,17 @@ class MaintenanceTests(ServiceHarness):
         self.assertNotIn(orphan, self.fake.resources)
         self.assertIn(registered, self.fake.resources)
 
+    def test_orphaned_tor_gateway_is_found_and_removed_but_a_live_one_is_kept(self) -> None:
+        live = self.make_ws()
+        self.fake.gateways["gw-live"] = {"orbitnest.workspace": live.id}
+        self.fake.gateways["gw-gone"] = {"orbitnest.workspace": "01ARZ3NDEKTSV4RRFFQ69G5FAV"}
+        found = self.service.find_orphans()
+        self.assertEqual([o["resource_id"] for o in found], ["gw-gone"])
+        self.assertIn("Tor gateway", found[0]["reason"])
+        done = self.service.cleanup(apply=True)
+        self.assertEqual([o["resource_id"] for o in done.orphans_removed], ["gw-gone"])
+        self.assertEqual(list(self.fake.gateways), ["gw-live"])
+
     def test_registered_resource_of_deleted_workspace_is_orphan(self) -> None:
         ws = self.make_ws()
         rid = self.store.current_instance(ws.id).resource_id

@@ -174,6 +174,14 @@ against a motivated adversary, the Tor Browser template — or real Tails, on re
 the stronger choice; the Tor-routed browsers here are for keeping casual browsing off your own IP
 address, not for operating under serious threat.
 
+## When something does not work
+
+Sign in as an administrator and open **Admin, System**. The Health section at the top lists what is
+wrong in plain sentences, each with the fix: Docker not reachable, a template's image not built, the
+Tor gateway missing, leftover gateway containers, no recent backup, or a newer version waiting on
+GitHub. Most problems are visible there before you need to read a log. Inside a Tor-routed workspace,
+the Overview tab has a **Check my Tor connection** button that shows the address websites actually see.
+
 ## Operations
 
 Besides `start`, `stop`, `restart`, `status` and `update`, the `orbitnest` command also accepts the
@@ -185,6 +193,7 @@ administrative subcommands below — run any of them the same way, for example `
   overwrites a live install by accident.
 - `cleanup [--apply]` — reports orphaned runtime resources and purged data directories; it is a dry
   run unless you add `--apply`.
+- `cleanup --apply` also removes Tor gateway containers whose workspace no longer exists.
 - `revoke-sessions` — signs every user out everywhere, for example after a suspected compromise.
 - `reset-password <username>` — resets one user's password from the command line.
 - `migrate` — applies any pending database migrations; `orbitnest update` already runs this for

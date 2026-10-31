@@ -73,6 +73,7 @@ class FakeRuntime(RuntimeAdapter):
     isolation: str = "container"
     supports_tor: bool = True
     resources: dict[str, _Res] = field(default_factory=dict)
+    gateways: dict[str, dict[str, str]] = field(default_factory=dict)  # helper containers by id
     calls: list[tuple[str, str]] = field(default_factory=list)
     # operation -> number of upcoming calls that should fail
     failures: dict[str, int] = field(default_factory=dict)
@@ -128,6 +129,7 @@ class FakeRuntime(RuntimeAdapter):
     def remove(self, resource_id: str) -> None:
         self._enter("remove", resource_id)
         self.resources.pop(resource_id, None)
+        self.gateways.pop(resource_id, None)
 
     def inspect(self, resource_id: str) -> RuntimeState:
         self._enter("inspect", resource_id)
@@ -180,6 +182,15 @@ class FakeRuntime(RuntimeAdapter):
     def list_managed(self) -> dict[str, dict[str, str]]:
         self._enter("list_managed", "-")
         return {rid: dict(r.spec.labels) for rid, r in self.resources.items()}
+
+    tor_answer: dict[str, object] = field(default_factory=lambda: {"is_tor": True, "exit_ip": "203.0.113.7"})
+
+    def tor_check(self, resource_id: str) -> dict[str, object]:
+        self._enter("tor_check", resource_id)
+        return dict(self.tor_answer)
+
+    def list_gateways(self) -> dict[str, dict[str, str]]:
+        return {rid: dict(labels) for rid, labels in self.gateways.items()}
 
     # -- test controls -------------------------------------------------------------------
     def crash(self, rid: str, code: int = 137) -> None:

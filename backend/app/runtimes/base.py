@@ -149,6 +149,14 @@ class RuntimeAdapter(ABC):
     @abstractmethod
     def inspect(self, resource_id: str) -> RuntimeState: ...
 
+    def tor_check(self, resource_id: str) -> dict[str, object]:
+        """Ask the Tor Project, through this workspace's gateway, which exit address it uses."""
+        raise RuntimeFailure("This runtime has no Tor gateway.", operation="tor_check")
+
+    def list_gateways(self) -> dict[str, dict[str, str]]:
+        """Helper (Tor gateway) containers by resource id -> labels. Empty where none exist."""
+        return {}
+
     def open_shell(self, resource_id: str, cols: int, rows: int) -> ShellSession:
         """Open an interactive shell inside the workspace. Adapters without support raise."""
         raise RuntimeFailure("Terminals are not supported by this runtime.", operation="shell")

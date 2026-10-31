@@ -79,7 +79,16 @@ export async function workspacesView() {
   }));
   const search = h("div", { class: "search" }, icon("search"), h("input", { type: "search", placeholder: "Search workspaces", "aria-label": "Search workspaces", oninput: (e) => { query = e.target.value.trim().toLowerCase(); draw(); } }));
   draw();
-  page("workspaces", h("div", { class: "row between" }, h("div", {}, h("h1", { text: "Workspaces" }), h("p", { class: "muted", style: null, text: "Isolated environments that run on this host." })), create), modeBanner(), stats,
+  // Administrators get a quiet nudge when GitHub has newer code. The server caches the check.
+  const updateBanner = h("div", { hidden: true });
+  if (state.user?.role === "admin") {
+    api("GET", "/system/update").then((u) => {
+      if (!u.behind) return;
+      add(updateBanner, h("div", { class: "banner" }, icon("refresh"), h("div", {}, h("strong", { text: `${u.behind} update${u.behind === 1 ? "" : "s"} available. ` }), "In a terminal on this machine, run ", h("code", { text: "orbitnest update" }), ". It restarts the server for you.")));
+      updateBanner.hidden = false;
+    }).catch(() => {});
+  }
+  page("workspaces", h("div", { class: "row between" }, h("div", {}, h("h1", { text: "Workspaces" }), h("p", { class: "muted", style: null, text: "Isolated environments that run on this host." })), create), updateBanner, modeBanner(), stats,
     h("div", { class: "row between" }, search, chips), grid);
   poll(refresh, 4000);
 }
@@ -334,6 +343,20 @@ export async function workspaceView(id, tab = "overview") {
     lastStatus = ws.status;
   };
 
+  // Asks the Tor Project, through this workspace's own gateway, which exit address it is using.
+  const torCheckCard = () => {
+    const out = h("div", { class: "muted", text: "Press the button to see which address websites see for this workspace." });
+    const b = h("button", { type: "button", disabled: !["running", "idle"].includes(ws.status), text: "Check my Tor connection", onclick: async (e) => {
+      out.textContent = "Checking through Tor. This can take up to a minute…";
+      await busy(e.currentTarget, async () => {
+        try {
+          const r = await api("POST", `/workspaces/${id}/tor-check`);
+          out.textContent = r.is_tor ? `Connected through Tor. Websites see ${r.exit_ip}, not your own address.` : `Not Tor. Websites see ${r.exit_ip}. Do not use this workspace for anything private.`;
+        } catch (err) { out.textContent = errorMessage(err); }
+      });
+    } });
+    return h("div", { class: "card stack" }, h("strong", { text: "Tor connection" }), out, h("div", { class: "row" }, b));
+  };
   const overview = h("div", { class: "stack" });
   const drawOverview = async () => {
     const events = (await api("GET", `/workspaces/${id}/events`)).items;
@@ -349,6 +372,7 @@ export async function workspaceView(id, tab = "overview") {
         h("dt", { text: "Created" }), h("dd", { text: fmtTime(ws.created_at) }),
         h("dt", { text: "Last activity" }), h("dd", { text: ago(ws.last_activity_at) }),
         h("dt", { text: "Health" }), h("dd", { text: ws.health.ok === null ? "unknown" : ws.health.ok ? "ok" : "failing" }))),
+      ws.egress === "tor" ? torCheckCard() : null,
       h("div", { class: "card" }, h("h2", { text: "History" }), h("div", { class: "tablewrap" }, h("table", {},
         h("thead", {}, h("tr", {}, ...["When", "Event", "Change", "Note"].map((t) => h("th", { text: t })))),
         h("tbody", {}, events.map((e) => h("tr", {}, h("td", { text: ago(e.at), title: fmtTime(e.at) }), h("td", { text: e.event }),

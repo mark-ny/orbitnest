@@ -218,6 +218,19 @@ class TemplateAndPolicyApiTests(ApiBase):
         self.assertEqual(self.admin.get("/api/v1/settings/policy").json()["max_running_per_user"], 4)
 
 
+class TorCheckApiTests(ApiBase):
+    def test_reports_the_exit_address_for_a_tor_workspace_only(self) -> None:
+        wid = self.create(template_id="browser-chromium", egress="tor", profile="large").json()["id"]
+        r = self.alice.post(f"/api/v1/workspaces/{wid}/tor-check")
+        self.assertEqual(r.status, 200, r.text)
+        self.assertEqual(r.json(), {"is_tor": True, "exit_ip": "203.0.113.7"})
+        self.assertEqual(self.bob.post(f"/api/v1/workspaces/{wid}/tor-check").status, 404)  # not theirs
+
+    def test_refused_for_a_direct_workspace(self) -> None:
+        wid = self.create(template_id="browser-chromium", egress="direct", profile="large").json()["id"]
+        self.assertEqual(self.alice.post(f"/api/v1/workspaces/{wid}/tor-check").status, 409)
+
+
 class HelperImageBuildApiTests(ApiBase):
     def setUp(self) -> None:
         super().setUp()

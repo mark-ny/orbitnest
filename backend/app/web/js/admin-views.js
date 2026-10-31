@@ -139,9 +139,21 @@ async function auditTab() {
 }
 
 async function systemTab() {
-  const caps = await loadCaps(true);
+  const [caps, report] = await Promise.all([loadCaps(true), api("GET", "/system/report")]);
+  const LEVEL = { error: "danger", warning: "warn", info: "" };
+  const problems = report.problems.length
+    ? report.problems.map((p) => h("div", { class: `banner ${LEVEL[p.level] || ""}` }, h("div", {}, h("strong", { text: p.what }), h("div", { class: "muted", text: p.fix }))))
+    : [h("div", { class: "banner" }, h("div", {}, h("strong", { text: "Everything looks fine." })))];
+  const imageRow = (i) => h("tr", {}, h("td", { text: i.name }), h("td", { class: "mono", text: i.image }), h("td", {}, i.present === null ? "unknown" : i.present ? "installed" : "not installed"));
+  const health = h("div", { class: "stack" },
+    h("div", { class: "row between" }, h("h2", { text: "Health" }), h("span", { class: "muted", text: `OrbitNest ${report.version}${report.update.current ? ` (${report.update.current})` : ""}` })),
+    ...problems,
+    h("div", { class: "card tablewrap" }, h("h3", { text: "Images" }), h("table", {}, h("thead", {}, h("tr", {}, ...["Image", "Tag", "State"].map((t) => h("th", { text: t })))), h("tbody", {}, report.images.map(imageRow)))),
+    h("div", { class: "card" }, h("dl", { class: "kv" },
+      h("dt", { text: "Tor gateways" }), h("dd", { text: `${report.gateways.running} running, ${report.gateways.orphaned} leftover` }),
+      h("dt", { text: "Last backup" }), h("dd", { text: report.backup.last_backup_days === null ? "never" : `${report.backup.last_backup_days} days ago` }))));
   const feature = ([name, f]) => h("tr", {}, h("td", { text: name.replaceAll("_", " ") }), h("td", {}, pill(f.state === "available" ? "running" : "stopped"), " ", f.state), h("td", { text: f.reason }), h("td", { text: f.remediation || "" }));
-  adminPage("system",
+  adminPage("system", health,
     h("div", { class: "card" }, h("h2", { text: "This host" }), h("dl", { class: "kv" },
       h("dt", { text: "Mode" }), h("dd", { text: caps.mode }),
       h("dt", { text: "OS" }), h("dd", { text: `${caps.platform.os_family} ${caps.platform.os_release} (${caps.platform.architecture})` }),

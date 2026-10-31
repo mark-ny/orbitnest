@@ -234,3 +234,11 @@ gateway listing) are tested against a scripted Docker CLI, not a real daemon.
 - Not done, deliberately: a "new Tor identity" button (needs Tor's control port, which the gateway
   keeps closed so a workspace cannot reach it) and scheduled automatic backups (the health page warns
   when none exist).
+
+## 2026-10-31 (later): Docker-less phone browser
+
+Added the `browser-private-phone` template and `ProotBrowserRuntime` (Chromium in a proot-distro
+Debian userland, VNC over a unix socket bridged with socat, own Tor process with the browser forced
+to its SOCKS port, session folder wiped on stop). `orbitnest setup-phone-browser` installs the
+userland. 468 tests pass, ruff clean. UNVERIFIED on a real phone: proot-distro behaviour, Xvnc
+`-rfbunixpath`, Chromium `--no-sandbox` in proot, Tor inside proot. Isolation is "none" by design.

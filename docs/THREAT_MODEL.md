@@ -81,3 +81,11 @@
 4. Assess: list workspaces and containers created in the window; check for privileged or unexpected options.
 5. Recover: rebuild from known-good images, restore data from backup, force password resets.
 6. Review: update this model and add a regression test.
+
+## T24: Docker-less phone browser (Termux)
+
+No isolation: the browser runs as the Termux user and can read that user's files; a compromised
+browser could ignore its proxy setting and connect directly. Mitigations are limited to: unix-socket
+screen (no TCP listener), explicit Tor SOCKS proxy with remote DNS, fail-closed start when Tor is not
+ready, server secrets withheld from the process environment, and wipe of the session folder on stop.
+Unverified on real hardware.

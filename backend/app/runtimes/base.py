@@ -127,6 +127,7 @@ class RuntimeAdapter(ABC):
     name: str
     isolation: Literal["container", "none"]
     supports_tor: bool = False  # can force all of a workload's traffic through Tor
+    streams: bool = False  # can bridge a workload's screen to the viewer (see stream_bridge_argv)
 
     @abstractmethod
     def create(self, spec: RuntimeSpec) -> str:

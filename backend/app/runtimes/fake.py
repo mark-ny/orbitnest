@@ -72,6 +72,7 @@ class FakeRuntime(RuntimeAdapter):
     name: str = "fake"
     isolation: str = "container"
     supports_tor: bool = True
+    streams: bool = True
     resources: dict[str, _Res] = field(default_factory=dict)
     gateways: dict[str, dict[str, str]] = field(default_factory=dict)  # helper containers by id
     calls: list[tuple[str, str]] = field(default_factory=list)

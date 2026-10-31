@@ -35,6 +35,7 @@ MATRIX: Final[dict[str, tuple[str, str, str, str]]] = {
     "browser-chromium": ("full", "full", "remote", "full"),
     "browser-firefox": ("full", "full", "remote", "full"),
     "browser-tor": ("full", "full", "remote", "full"),
+    "browser-private-phone": ("unsupported", "unsupported", "limited", "unsupported"),
     "desktop-ubuntu": ("full", "full", "remote", "full"),
     "desktop-kali": ("limited", "limited", "remote", "limited"),
     "terminal-ubuntu": ("full", "full", "limited", "full"),
@@ -46,6 +47,7 @@ MATRIX: Final[dict[str, tuple[str, str, str, str]]] = {
 }
 
 MATRIX_NOTES: Final[dict[str, str]] = {
+    "browser-private-phone": "Termux only; proot-distro, NOT a sandbox. Uses phone CPU/RAM; wiped on stop.",
     "desktop-kali": "Built locally, rolling Kali (several GB). Authorized use only; rules required.",
     "browser-tor": "x86_64 only; needs outbound access. The build downloads and verifies Tor Browser.",
     "terminal-ubuntu": "Termux: would use proot-distro (no isolation).",

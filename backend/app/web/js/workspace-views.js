@@ -159,7 +159,9 @@ async function createDialog(templates) {
     const choices = t.allowed_egress || [];
     const paintNetBanner = () => {
       clear(netBanner);
-      if (t.privacy === "tor") {
+      if (t.privacy_notice) {
+        add(netBanner, h("div", { class: "banner warn" }, icon("shield"), h("div", {}, h("strong", { text: "Private browser on this phone. " }), t.privacy_notice)));
+      } else if (t.privacy === "tor") {
         // Tor Browser runs its own Tor process; it never joins the shared gateway.
         add(netBanner, h("div", { class: "banner" }, icon("onion"), h("div", {}, h("strong", { text: "Tor Browser. " }), "Web traffic goes through Tor, so sites see a Tor exit instead of your IP. Data is erased when the workspace stops. This is not Tails: your internet provider can see that you use Tor, and accounts you sign in to identify you.")));
       } else if (egressSel.value === "tor") {
@@ -367,7 +369,7 @@ export async function workspaceView(id, tab = "overview") {
         h("dt", { text: "Runtime" }), h("dd", { text: `${ws.runtime} (${ws.isolation === "container" ? "container" : "no isolation"})` }),
         h("dt", { text: "Size" }), h("dd", { text: `${ws.resource_profile}: ${ws.limits.cpu_millis / 1000} CPU, ${ws.limits.memory_mb} MB RAM, ${ws.limits.pids} processes, ${ws.limits.storage_mb} MB storage (reporting limit)` }),
         h("dt", { text: "Data" }), h("dd", { text: ws.persistence }),
-        h("dt", { text: "Network" }), h("dd", { text: ws.egress ? `${ws.network_policy} - ${ws.egress === "tor" ? "routed through Tor" : "direct (real IP)"}` : ws.network_policy }),
+        h("dt", { text: "Network" }), h("dd", { text: ws.egress && tpl?.privacy !== "tor" ? `${ws.network_policy} - ${ws.egress === "tor" ? "routed through Tor" : "direct (real IP)"}` : ws.network_policy }),
         h("dt", { text: "Idle timeout" }), h("dd", { text: ws.idle_timeout_minutes ? `${ws.idle_timeout_minutes} min` : "never" }),
         h("dt", { text: "Created" }), h("dd", { text: fmtTime(ws.created_at) }),
         h("dt", { text: "Last activity" }), h("dd", { text: ago(ws.last_activity_at) }),
